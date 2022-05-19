@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"github.com/tetratelabs/wazero/sys"
 	"io"
 	"testing"
 	"testing/iotest"
@@ -81,6 +82,7 @@ func TestAbort(t *testing.T) {
 
 			_, err = mod.ExportedFunction("abort").Call(testCtx, uint64(messageOff), uint64(filenameOff), 1, 2)
 			require.Error(t, err)
+			require.Equal(t, 255, err.(*sys.ExitError).ExitCode())
 
 			require.Equal(t, tc.expected, out.String())
 		})
