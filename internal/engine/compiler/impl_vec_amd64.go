@@ -139,7 +139,8 @@ func (c *amd64Compiler) compileV128Load(o *wazeroir.OperationV128Load) error {
 		if err != nil {
 			return err
 		}
-		c.assembler.CompileMemoryToRegister(amd64.MOVB, reg, -1, reg)
+		c.assembler.CompileMemoryWithIndexToRegister(amd64.MOVB, amd64ReservedRegisterForMemory, -1,
+			reg, 1, reg)
 		// pinsrb   $0, reg, result
 		// pxor	    tmpVReg, tmpVReg
 		// pshufb   tmpVReg, result
@@ -156,7 +157,8 @@ func (c *amd64Compiler) compileV128Load(o *wazeroir.OperationV128Load) error {
 		if err != nil {
 			return err
 		}
-		c.assembler.CompileMemoryToRegister(amd64.MOVB, reg, -2, reg)
+		c.assembler.CompileMemoryWithIndexToRegister(amd64.MOVB, amd64ReservedRegisterForMemory, -2,
+			reg, 1, reg)
 		// pinsrw $0, reg, result
 		// pinsrw $1, reg, result
 		// pshufd $0, result, result (result = result[0,0,0,0])
@@ -168,7 +170,8 @@ func (c *amd64Compiler) compileV128Load(o *wazeroir.OperationV128Load) error {
 		if err != nil {
 			return err
 		}
-		c.assembler.CompileMemoryToRegister(amd64.MOVB, reg, -4, reg)
+		c.assembler.CompileMemoryWithIndexToRegister(amd64.MOVB, amd64ReservedRegisterForMemory, -4,
+			reg, 1, reg)
 		// pinsrd $0, reg, result
 		// pshufd $0, result, result (result = result[0,0,0,0])
 		c.assembler.CompileRegisterToRegisterWithArg(amd64.PINSRD, reg, result, 0)
@@ -178,7 +181,8 @@ func (c *amd64Compiler) compileV128Load(o *wazeroir.OperationV128Load) error {
 		if err != nil {
 			return err
 		}
-		c.assembler.CompileMemoryToRegister(amd64.MOVB, reg, -8, reg)
+		c.assembler.CompileMemoryWithIndexToRegister(amd64.MOVB, amd64ReservedRegisterForMemory, -8,
+			reg, 1, reg)
 		// pinsrq $0, reg, result
 		// pinsrq $1, reg, result
 		c.assembler.CompileRegisterToRegisterWithArg(amd64.PINSRQ, reg, result, 0)
@@ -186,7 +190,7 @@ func (c *amd64Compiler) compileV128Load(o *wazeroir.OperationV128Load) error {
 	case wazeroir.LoadV128Type32zero:
 		err = c.compileV128LoadImpl(amd64.MOVL, o.Arg.Offset, 4, result)
 	case wazeroir.LoadV128Type64zero:
-		err = c.compileV128LoadImpl(amd64.MOVL, o.Arg.Offset, 8, result)
+		err = c.compileV128LoadImpl(amd64.MOVQ, o.Arg.Offset, 8, result)
 	}
 
 	if err != nil {

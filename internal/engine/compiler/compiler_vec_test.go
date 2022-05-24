@@ -141,6 +141,110 @@ func TestCompiler_compileV128Load(t *testing.T) {
 				10, 11, 0, 0,
 			},
 		},
+		{
+			name: "32x2s offset=0", loadType: wazeroir.LoadV128Type32x2s, offset: 0,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 10,
+					11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+				})
+			},
+			exp: [16]byte{
+				1, 0xff, 3, 0xff, 0xff, 0xff, 0xff, 0xff,
+				5, 6, 7, 0xff, 0xff, 0xff, 0xff, 0xff,
+			},
+		},
+		{
+			name: "32x2s offset=2", loadType: wazeroir.LoadV128Type32x2s, offset: 2,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+					11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+				})
+			},
+			exp: [16]byte{
+				3, 0xff, 5, 6, 0, 0, 0, 0,
+				7, 0xff, 9, 0xff, 0xff, 0xff, 0xff, 0xff,
+			},
+		},
+		{
+			name: "32x2u offset=0", loadType: wazeroir.LoadV128Type32x2u, offset: 0,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 10,
+					11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+				})
+			},
+			exp: [16]byte{
+				1, 0xff, 3, 0xff, 0, 0, 0, 0,
+				5, 6, 7, 0xff, 0, 0, 0, 0,
+			},
+		},
+		{
+			name: "32x2u offset=2", loadType: wazeroir.LoadV128Type32x2u, offset: 2,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+					11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+				})
+			},
+			exp: [16]byte{
+				3, 0xff, 5, 6, 0, 0, 0, 0,
+				7, 0xff, 9, 0xff, 0, 0, 0, 0,
+			},
+		},
+		{
+			name: "32zero offset=0", loadType: wazeroir.LoadV128Type32zero, offset: 0,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+					11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+				})
+			},
+			exp: [16]byte{
+				1, 0xff, 3, 0xff, 0, 0, 0, 0,
+				0, 0, 0, 0, 0, 0, 0, 0,
+			},
+		},
+		{
+			name: "32zero offset=3", loadType: wazeroir.LoadV128Type32zero, offset: 3,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 0xff, 8, 9, 0xff,
+					11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+				})
+			},
+			exp: [16]byte{
+				0xff, 5, 6, 0xff, 0, 0, 0, 0,
+				0, 0, 0, 0, 0, 0, 0, 0,
+			},
+		},
+		{
+			name: "64zero offset=0", loadType: wazeroir.LoadV128Type64zero, offset: 0,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+					11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+				})
+			},
+			exp: [16]byte{
+				1, 0xff, 3, 0xff, 5, 6, 7, 0xff,
+				0, 0, 0, 0, 0, 0, 0, 0,
+			},
+		},
+		{
+			name: "64zero offset=2", loadType: wazeroir.LoadV128Type64zero, offset: 2,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+					11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+				})
+			},
+			exp: [16]byte{
+				3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+				0, 0, 0, 0, 0, 0, 0, 0,
+			},
+		},
 	}
 
 	for _, tc := range tests {
