@@ -1274,7 +1274,7 @@ func TestAssemblerImpl_EncodeMemoryToRegister(t *testing.T) {
 		a := amd64.NewAssemblerImpl()
 		require.EqualError(t, a.EncodeMemoryToRegister(n), "JMP is unsupported for from:memory,to:register type")
 	})
-	intRegs := []asm.Register{amd64.RegAX, amd64.RegBP, amd64.RegSI, amd64.RegDI, amd64.RegR10}
+	intRegs := []asm.Register{amd64.RegAX, amd64.RegBP, amd64.RegDI, amd64.RegR10}
 	floatRegs := []asm.Register{amd64.RegX0, amd64.RegX8}
 	scales := []byte{1, 4}
 	tests := []struct {
@@ -1303,6 +1303,12 @@ func TestAssemblerImpl_EncodeMemoryToRegister(t *testing.T) {
 		{instruction: amd64.SUBSS, isFloatInst: true},
 		{instruction: amd64.UCOMISD, isFloatInst: true},
 		{instruction: amd64.UCOMISS, isFloatInst: true},
+		{instruction: amd64.PMOVSXBW, isFloatInst: true},
+		{instruction: amd64.PMOVSXWD, isFloatInst: true},
+		{instruction: amd64.PMOVSXDQ, isFloatInst: true},
+		{instruction: amd64.PMOVZXBW, isFloatInst: true},
+		{instruction: amd64.PMOVZXWD, isFloatInst: true},
+		{instruction: amd64.PMOVZXDQ, isFloatInst: true},
 	}
 
 	for _, tt := range tests {

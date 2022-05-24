@@ -188,6 +188,12 @@ func (c *amd64Compiler) compileV128Load(o *wazeroir.OperationV128Load) error {
 	case wazeroir.LoadV128Type64zero:
 		err = c.compileV128LoadImpl(amd64.MOVL, o.Arg.Offset, 8, result)
 	}
+
+	if err != nil {
+		return err
+	}
+
+	c.pushVectorRuntimeValueLocationOnRegister(result)
 	return nil
 }
 
@@ -196,8 +202,8 @@ func (c *amd64Compiler) compileV128LoadImpl(inst asm.Instruction, offset uint32,
 	if err != nil {
 		return err
 	}
-	c.assembler.CompileConstToRegister(amd64.SUBQ, targetSizeInBytes, offsetReg)
-	c.assembler.CompileMemoryToRegister(inst, offsetReg, 0, dst)
+	c.assembler.CompileMemoryWithIndexToRegister(inst, amd64ReservedRegisterForMemory, -targetSizeInBytes,
+		offsetReg, 1, dst)
 	return nil
 }
 

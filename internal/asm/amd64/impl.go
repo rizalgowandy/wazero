@@ -1671,6 +1671,30 @@ func (a *AssemblerImpl) EncodeMemoryToRegister(n *NodeImpl) (err error) {
 		// https://www.felixcloutier.com/x86/movdqu:vmovdqu8:vmovdqu16:vmovdqu32:vmovdqu64
 		mandatoryPrefix = 0xf3
 		opcode = []byte{0x0f, 0x6f}
+	case PMOVSXBW:
+		// https://www.felixcloutier.com/x86/pmovsx
+		mandatoryPrefix = 0x66
+		opcode = []byte{0x0f, 0x38, 0x20}
+	case PMOVSXWD:
+		// https://www.felixcloutier.com/x86/pmovsx
+		mandatoryPrefix = 0x66
+		opcode = []byte{0x0f, 0x38, 0x23}
+	case PMOVSXDQ:
+		// https://www.felixcloutier.com/x86/pmovsx
+		mandatoryPrefix = 0x66
+		opcode = []byte{0x0f, 0x38, 0x25}
+	case PMOVZXBW:
+		// https://www.felixcloutier.com/x86/pmovzx
+		mandatoryPrefix = 0x66
+		opcode = []byte{0x0f, 0x38, 0x30}
+	case PMOVZXWD:
+		mandatoryPrefix = 0x66
+		opcode = []byte{0x0f, 0x38, 0x33}
+		// https://www.felixcloutier.com/x86/pmovzx
+	case PMOVZXDQ:
+		mandatoryPrefix = 0x66
+		opcode = []byte{0x0f, 0x38, 0x35}
+		// https://www.felixcloutier.com/x86/pmovzx
 	default:
 		return errorEncodingUnsupported(n)
 	}

@@ -656,10 +656,24 @@ func InstructionName(instruction asm.Instruction) string {
 		return "SUBPS"
 	case SUBPD:
 		return "SUBPD"
+	case PMOVSXBW:
+		return "PMOVSXBW"
+	case PMOVSXWD:
+		return "PMOVSXWD"
+	case PMOVSXDQ:
+		return "PMOVSXDQ"
+	case PMOVZXBW:
+		return "PMOVZXBW"
+	case PMOVZXWD:
+		return "PMOVZXWD"
+	case PMOVZXDQ:
+		return "PMOVZXDQ"
 	case PSHUFB:
 		return "PSHUFB"
 	case PSHUFD:
 		return "PSHUFD"
+	case PXOR:
+		return "PXOR"
 	}
 	return "Unknown"
 }
