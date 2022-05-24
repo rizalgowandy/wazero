@@ -315,10 +315,22 @@ const (
 	PADDL
 	// PADDQ is the PADDQ instruction. https://www.felixcloutier.com/x86/paddb:paddw:paddd:paddq
 	PADDQ
+	// PSUBB is the PSUBB instruction. https://www.felixcloutier.com/x86/psubb:psubw:psubd
+	PSUBB
+	// PSUBW is the PSUBW instruction. https://www.felixcloutier.com/x86/psubb:psubw:psubd
+	PSUBW
+	// PSUBL is the PSUBL instruction. https://www.felixcloutier.com/x86/psubb:psubw:psubd
+	PSUBL
+	// PSUBQ is the PSUBQ instruction. https://www.felixcloutier.com/x86/paddb:paddw:paddd:paddq
+	PSUBQ
 	// ADDPS is the ADDPS instruction. https://www.felixcloutier.com/x86/addps
 	ADDPS
 	// ADDPD is the ADDPD instruction. https://www.felixcloutier.com/x86/addpd
 	ADDPD
+	// SUBPS is the SUBPS instruction. https://www.felixcloutier.com/x86/addps
+	SUBPS
+	// SUBPD is the SUBPD instruction. https://www.felixcloutier.com/x86/subpd
+	SUBPD
 )
 
 // InstructionName returns the name for an instruction
@@ -600,6 +612,18 @@ func InstructionName(instruction asm.Instruction) string {
 		return "ADDPS"
 	case ADDPD:
 		return "ADDPD"
+	case PSUBB:
+		return "PSUBB"
+	case PSUBW:
+		return "PSUBW"
+	case PSUBL:
+		return "PSUBL"
+	case PSUBQ:
+		return "PSUBQ"
+	case SUBPS:
+		return "SUBPS"
+	case SUBPD:
+		return "SUBPD"
 	}
 	return "Unknown"
 }

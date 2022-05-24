@@ -1150,8 +1150,14 @@ var registerToRegisterOpcode = map[asm.Instruction]struct {
 	PADDW:  {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0xfd}, requireSrcFloat: true, requireDstFloat: true},
 	PADDL:  {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0xfe}, requireSrcFloat: true, requireDstFloat: true},
 	PADDQ:  {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0xd4}, requireSrcFloat: true, requireDstFloat: true},
+	PSUBB:  {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0xf8}, requireSrcFloat: true, requireDstFloat: true},
+	PSUBW:  {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0xf9}, requireSrcFloat: true, requireDstFloat: true},
+	PSUBL:  {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0xfa}, requireSrcFloat: true, requireDstFloat: true},
+	PSUBQ:  {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0xfb}, requireSrcFloat: true, requireDstFloat: true},
 	ADDPS:  {opcode: []byte{0x0f, 0x58}, requireSrcFloat: true, requireDstFloat: true},
 	ADDPD:  {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x58}, requireSrcFloat: true, requireDstFloat: true},
+	SUBPS:  {opcode: []byte{0x0f, 0x5c}, requireSrcFloat: true, requireDstFloat: true},
+	SUBPD:  {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x5c}, requireSrcFloat: true, requireDstFloat: true},
 }
 
 var RegisterToRegisterShiftOpcode = map[asm.Instruction]struct {

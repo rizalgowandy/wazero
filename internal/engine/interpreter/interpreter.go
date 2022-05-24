@@ -578,7 +578,7 @@ func (e *engine) lowerIR(ir *wazeroir.CompilationResult) (*code, error) {
 		case *wazeroir.OperationTableFill:
 			op.us = make([]uint64, 1)
 			op.us[0] = uint64(o.TableIndex)
-		case *wazeroir.OperationConstV128:
+		case *wazeroir.OperationV128Const:
 			op.us = make([]uint64, 2)
 			op.us[0] = o.Lo
 			op.us[1] = o.Hi
@@ -586,22 +586,22 @@ func (e *engine) lowerIR(ir *wazeroir.CompilationResult) (*code, error) {
 			op.b1 = o.Shape
 		case *wazeroir.OperationV128Sub:
 			op.b1 = o.Shape
-		case *wazeroir.OperationLoadV128:
+		case *wazeroir.OperationV128Load:
 			op.b1 = o.Type
 			op.us = make([]uint64, 2)
 			op.us[0] = uint64(o.Arg.Alignment)
 			op.us[1] = uint64(o.Arg.Offset)
-		case *wazeroir.OperationLoadV128Lane:
+		case *wazeroir.OperationV128LoadLane:
 			op.b1 = o.LaneSize
 			op.b2 = o.LaneIndex
 			op.us = make([]uint64, 2)
 			op.us[0] = uint64(o.Arg.Alignment)
 			op.us[1] = uint64(o.Arg.Offset)
-		case *wazeroir.OperationStoreV128:
+		case *wazeroir.OperationV128Store:
 			op.us = make([]uint64, 2)
 			op.us[0] = uint64(o.Arg.Alignment)
 			op.us[1] = uint64(o.Arg.Offset)
-		case *wazeroir.OperationStoreV128Lane:
+		case *wazeroir.OperationV128StoreLane:
 			op.b1 = o.LaneSize
 			op.b2 = o.LaneIndex
 			op.us = make([]uint64, 2)

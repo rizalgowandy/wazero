@@ -6,8 +6,8 @@ import (
 	"github.com/tetratelabs/wazero/internal/wazeroir"
 )
 
-// compileConstV128 implements compiler.compileConstV128 for amd64 architecture.
-func (c *amd64Compiler) compileConstV128(o *wazeroir.OperationConstV128) error {
+// compileV128Const implements compiler.compileV128Const for amd64 architecture.
+func (c *amd64Compiler) compileV128Const(o *wazeroir.OperationV128Const) error {
 	c.maybeCompileMoveTopConditionalToFreeGeneralPurposeRegister()
 
 	result, err := c.allocateRegister(registerTypeVector)
@@ -42,8 +42,8 @@ func (c *amd64Compiler) compileConstV128(o *wazeroir.OperationConstV128) error {
 	return nil
 }
 
-// compileAddV128 implements compiler.compileAddV128 for amd64 architecture.
-func (c *amd64Compiler) compileAddV128(o *wazeroir.OperationV128Add) error {
+// compileV128Add implements compiler.compileV128Add for amd64 architecture.
+func (c *amd64Compiler) compileV128Add(o *wazeroir.OperationV128Add) error {
 	c.locationStack.pop() // skip higher 64-bits.
 	x2 := c.locationStack.pop()
 	if err := c.compileEnsureOnGeneralPurposeRegister(x2); err != nil {
@@ -74,5 +74,83 @@ func (c *amd64Compiler) compileAddV128(o *wazeroir.OperationV128Add) error {
 
 	c.pushVectorRuntimeValueLocationOnRegister(x1.register)
 	c.locationStack.markRegisterUnused(x2.register)
+	return nil
+}
+
+func (c *amd64Compiler) compileV128Sub(o *wazeroir.OperationV128Sub) error {
+	c.locationStack.pop() // skip higher 64-bits.
+	x2 := c.locationStack.pop()
+	if err := c.compileEnsureOnGeneralPurposeRegister(x2); err != nil {
+		return err
+	}
+
+	c.locationStack.pop() // skip higher 64-bits.
+	x1 := c.locationStack.pop()
+	if err := c.compileEnsureOnGeneralPurposeRegister(x1); err != nil {
+		return err
+	}
+	var inst asm.Instruction
+	switch o.Shape {
+	case wazeroir.ShapeI8x16:
+		inst = amd64.PSUBB
+	case wazeroir.ShapeI16x8:
+		inst = amd64.PSUBW
+	case wazeroir.ShapeI32x4:
+		inst = amd64.PSUBL
+	case wazeroir.ShapeI64x2:
+		inst = amd64.PSUBQ
+	case wazeroir.ShapeF32x4:
+		inst = amd64.SUBPS
+	case wazeroir.ShapeF64x2:
+		inst = amd64.SUBPD
+	}
+	c.assembler.CompileRegisterToRegister(inst, x2.register, x1.register)
+
+	c.pushVectorRuntimeValueLocationOnRegister(x1.register)
+	c.locationStack.markRegisterUnused(x2.register)
+	return nil
+}
+
+func (c *amd64Compiler) compileV128Load(o *wazeroir.OperationV128Load) error {
+	return nil
+}
+
+func (c *amd64Compiler) compileV128LoadLane(o *wazeroir.OperationV128LoadLane) error {
+	return nil
+}
+
+func (c *amd64Compiler) compileV128Store(o *wazeroir.OperationV128Store) error {
+	return nil
+}
+
+func (c *amd64Compiler) compileV128StoreLane(o *wazeroir.OperationV128StoreLane) error {
+	return nil
+}
+
+func (c *amd64Compiler) compileV128ExtractLane(o *wazeroir.OperationV128ExtractLane) error {
+	return nil
+}
+
+func (c *amd64Compiler) compileV128ReplaceLane(o *wazeroir.OperationV128ReplaceLane) error {
+	return nil
+}
+
+func (c *amd64Compiler) compileV128Splat(o *wazeroir.OperationV128Splat) error {
+	return nil
+}
+
+func (c *amd64Compiler) compileV128Shuffle(o *wazeroir.OperationV128Shuffle) error {
+	return nil
+}
+
+func (c *amd64Compiler) compileV128Swizzle(o *wazeroir.OperationV128Swizzle) error {
+	return nil
+}
+
+func (c *amd64Compiler) compileV128AnyTrue(o *wazeroir.OperationV128AnyTrue) error {
+	return nil
+}
+
+func (c *amd64Compiler) compileV128AllTrue(o *wazeroir.OperationV128AllTrue) error {
 	return nil
 }

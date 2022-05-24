@@ -1727,7 +1727,7 @@ operatorSwitch:
 			c.pc += 8
 			hi := binary.LittleEndian.Uint64(c.body[c.pc : c.pc+8])
 			c.emit(
-				&OperationConstV128{Lo: lo, Hi: hi},
+				&OperationV128Const{Lo: lo, Hi: hi},
 			)
 			c.pc += 7
 		case wasm.OpcodeVecI8x16Add:
@@ -1768,7 +1768,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type128, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type128, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load8x8s:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load8x8SName)
@@ -1776,7 +1776,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type8x8s, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type8x8s, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load8x8u:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load8x8UName)
@@ -1784,7 +1784,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type8x8u, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type8x8u, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load16x4s:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load16x4SName)
@@ -1792,7 +1792,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type16x4s, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type16x4s, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load16x4u:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load16x4UName)
@@ -1800,7 +1800,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type16x4u, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type16x4u, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load32x2s:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load32x2SName)
@@ -1808,7 +1808,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type32x2s, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type32x2s, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load32x2u:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load32x2UName)
@@ -1816,7 +1816,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type32x2u, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type32x2u, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load8Splat:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load8SplatName)
@@ -1824,7 +1824,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type8Splat, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type8Splat, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load16Splat:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load16SplatName)
@@ -1832,7 +1832,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type16Splat, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type16Splat, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load32Splat:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load32SplatName)
@@ -1840,7 +1840,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type32Splat, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type32Splat, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load64Splat:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load64SplatName)
@@ -1848,7 +1848,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type64Splat, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type64Splat, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load32zero:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load32zeroName)
@@ -1856,7 +1856,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type32zero, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type32zero, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load64zero:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load64zeroName)
@@ -1864,7 +1864,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationLoadV128{Type: LoadV128Type64zero, Arg: arg},
+				&OperationV128Load{Type: LoadV128Type64zero, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load8Lane:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load8LaneName)
@@ -1874,7 +1874,7 @@ operatorSwitch:
 			c.pc++
 			laneIndex := c.body[c.pc]
 			c.emit(
-				&OperationLoadV128Lane{LaneIndex: laneIndex, LaneSize: 8, Arg: arg},
+				&OperationV128LoadLane{LaneIndex: laneIndex, LaneSize: 8, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load16Lane:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load16LaneName)
@@ -1884,7 +1884,7 @@ operatorSwitch:
 			c.pc++
 			laneIndex := c.body[c.pc]
 			c.emit(
-				&OperationLoadV128Lane{LaneIndex: laneIndex, LaneSize: 16, Arg: arg},
+				&OperationV128LoadLane{LaneIndex: laneIndex, LaneSize: 16, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load32Lane:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load32LaneName)
@@ -1894,7 +1894,7 @@ operatorSwitch:
 			c.pc++
 			laneIndex := c.body[c.pc]
 			c.emit(
-				&OperationLoadV128Lane{LaneIndex: laneIndex, LaneSize: 32, Arg: arg},
+				&OperationV128LoadLane{LaneIndex: laneIndex, LaneSize: 32, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Load64Lane:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Load64LaneName)
@@ -1904,7 +1904,7 @@ operatorSwitch:
 			c.pc++
 			laneIndex := c.body[c.pc]
 			c.emit(
-				&OperationLoadV128Lane{LaneIndex: laneIndex, LaneSize: 64, Arg: arg},
+				&OperationV128LoadLane{LaneIndex: laneIndex, LaneSize: 64, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Store:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128StoreName)
@@ -1912,7 +1912,7 @@ operatorSwitch:
 				return err
 			}
 			c.emit(
-				&OperationStoreV128{Arg: arg},
+				&OperationV128Store{Arg: arg},
 			)
 		case wasm.OpcodeVecV128Store8Lane:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Store8LaneName)
@@ -1922,7 +1922,7 @@ operatorSwitch:
 			c.pc++
 			laneIndex := c.body[c.pc]
 			c.emit(
-				&OperationStoreV128Lane{LaneIndex: laneIndex, LaneSize: 8, Arg: arg},
+				&OperationV128StoreLane{LaneIndex: laneIndex, LaneSize: 8, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Store16Lane:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Store16LaneName)
@@ -1932,7 +1932,7 @@ operatorSwitch:
 			c.pc++
 			laneIndex := c.body[c.pc]
 			c.emit(
-				&OperationStoreV128Lane{LaneIndex: laneIndex, LaneSize: 16, Arg: arg},
+				&OperationV128StoreLane{LaneIndex: laneIndex, LaneSize: 16, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Store32Lane:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Store32LaneName)
@@ -1942,7 +1942,7 @@ operatorSwitch:
 			c.pc++
 			laneIndex := c.body[c.pc]
 			c.emit(
-				&OperationStoreV128Lane{LaneIndex: laneIndex, LaneSize: 32, Arg: arg},
+				&OperationV128StoreLane{LaneIndex: laneIndex, LaneSize: 32, Arg: arg},
 			)
 		case wasm.OpcodeVecV128Store64Lane:
 			arg, err := c.readMemoryArg(wasm.OpcodeVecV128Store64LaneName)
@@ -1952,7 +1952,7 @@ operatorSwitch:
 			c.pc++
 			laneIndex := c.body[c.pc]
 			c.emit(
-				&OperationStoreV128Lane{LaneIndex: laneIndex, LaneSize: 64, Arg: arg},
+				&OperationV128StoreLane{LaneIndex: laneIndex, LaneSize: 64, Arg: arg},
 			)
 		case wasm.OpcodeVecI8x16ExtractLaneS:
 			c.pc++
@@ -2236,7 +2236,7 @@ func (c *compiler) emitDefaultValue(t wasm.ValueType) {
 		c.emit(&OperationConstF64{Value: 0})
 	case wasm.ValueTypeV128:
 		c.stackPush(UnsignedTypeV128)
-		c.emit(&OperationConstV128{Hi: 0, Lo: 0})
+		c.emit(&OperationV128Const{Hi: 0, Lo: 0})
 	}
 }
 

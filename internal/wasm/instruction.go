@@ -576,21 +576,21 @@ const (
 	OpcodeVecF32x4Pmax    OpcodeVec = 0xeb
 
 	// f64 misc.
-	OpcodeVecF64x4Ceil    OpcodeVec = 0x74
-	OpcodeVecF64x4Floor   OpcodeVec = 0x75
-	OpcodeVecF64x4Trunc   OpcodeVec = 0x7a
-	OpcodeVecF64x4Nearest OpcodeVec = 0x94
-	OpcodeVecF64x4Abs     OpcodeVec = 0xec
-	OpcodeVecF64x4Neg     OpcodeVec = 0xed
-	OpcodeVecF64x4Sqrt    OpcodeVec = 0xef
-	OpcodeVecF64x4Add     OpcodeVec = 0xf0
-	OpcodeVecF64x4Sub     OpcodeVec = 0xf1
-	OpcodeVecF64x4Mul     OpcodeVec = 0xf2
-	OpcodeVecF64x4Div     OpcodeVec = 0xf3
-	OpcodeVecF64x4Min     OpcodeVec = 0xf4
-	OpcodeVecF64x4Max     OpcodeVec = 0xf5
-	OpcodeVecF64x4Pmin    OpcodeVec = 0xf6
-	OpcodeVecF64x4Pmax    OpcodeVec = 0xf7
+	OpcodeVecF64x2Ceil    OpcodeVec = 0x74
+	OpcodeVecF64x2Floor   OpcodeVec = 0x75
+	OpcodeVecF64x2Trunc   OpcodeVec = 0x7a
+	OpcodeVecF64x2Nearest OpcodeVec = 0x94
+	OpcodeVecF64x2Abs     OpcodeVec = 0xec
+	OpcodeVecF64x2Neg     OpcodeVec = 0xed
+	OpcodeVecF64x2Sqrt    OpcodeVec = 0xef
+	OpcodeVecF64x2Add     OpcodeVec = 0xf0
+	OpcodeVecF64x2Sub     OpcodeVec = 0xf1
+	OpcodeVecF64x2Mul     OpcodeVec = 0xf2
+	OpcodeVecF64x2Div     OpcodeVec = 0xf3
+	OpcodeVecF64x2Min     OpcodeVec = 0xf4
+	OpcodeVecF64x2Max     OpcodeVec = 0xf5
+	OpcodeVecF64x2Pmin    OpcodeVec = 0xf6
+	OpcodeVecF64x2Pmax    OpcodeVec = 0xf7
 
 	// conversions.
 	OpcodeVecI32x4TruncSatF32x4S      OpcodeVec = 0xf8
@@ -1259,21 +1259,21 @@ const (
 	OpcodeVecF32x4MaxName                  = "f32x4.max"
 	OpcodeVecF32x4PminName                 = "f32x4.pmin"
 	OpcodeVecF32x4PmaxName                 = "f32x4.pmax"
-	OpcodeVecF64x4CeilName                 = "f64x2.ceil"
-	OpcodeVecF64x4FloorName                = "f64x2.floor"
-	OpcodeVecF64x4TruncName                = "f64x2.trunc"
-	OpcodeVecF64x4NearestName              = "f64x2.nearest"
-	OpcodeVecF64x4AbsName                  = "f64x2.abs"
-	OpcodeVecF64x4NegName                  = "f64x2.neg"
-	OpcodeVecF64x4SqrtName                 = "f64x2.sqrt"
-	OpcodeVecF64x4AddName                  = "f64x2.add"
-	OpcodeVecF64x4SubName                  = "f64x2.sub"
-	OpcodeVecF64x4MulName                  = "f64x2.mul"
-	OpcodeVecF64x4DivName                  = "f64x2.div"
-	OpcodeVecF64x4MinName                  = "f64x2.min"
-	OpcodeVecF64x4MaxName                  = "f64x2.max"
-	OpcodeVecF64x4PminName                 = "f64x2.pmin"
-	OpcodeVecF64x4PmaxName                 = "f64x2.pmax"
+	OpcodeVecF64x2CeilName                 = "f64x2.ceil"
+	OpcodeVecF64x2FloorName                = "f64x2.floor"
+	OpcodeVecF64x2TruncName                = "f64x2.trunc"
+	OpcodeVecF64x2NearestName              = "f64x2.nearest"
+	OpcodeVecF64x2AbsName                  = "f64x2.abs"
+	OpcodeVecF64x2NegName                  = "f64x2.neg"
+	OpcodeVecF64x2SqrtName                 = "f64x2.sqrt"
+	OpcodeVecF64x2AddName                  = "f64x2.add"
+	OpcodeVecF64x2SubName                  = "f64x2.sub"
+	OpcodeVecF64x2MulName                  = "f64x2.mul"
+	OpcodeVecF64x2DivName                  = "f64x2.div"
+	OpcodeVecF64x2MinName                  = "f64x2.min"
+	OpcodeVecF64x2MaxName                  = "f64x2.max"
+	OpcodeVecF64x2PminName                 = "f64x2.pmin"
+	OpcodeVecF64x2PmaxName                 = "f64x2.pmax"
 	OpcodeVecI32x4TruncSatF32x4SName       = "i32x4.trunc_sat_f32x4_s"
 	OpcodeVecI32x4TruncSatF32x4UName       = "i32x4.trunc_sat_f32x4_u"
 	OpcodeVecF32x4ConvertI32x4SName        = "f32x4.convert_i32x4_s"
@@ -1498,21 +1498,21 @@ var vectorInstructionName = map[OpcodeVec]string{
 	OpcodeVecF32x4Max:                  OpcodeVecF32x4MaxName,
 	OpcodeVecF32x4Pmin:                 OpcodeVecF32x4PminName,
 	OpcodeVecF32x4Pmax:                 OpcodeVecF32x4PmaxName,
-	OpcodeVecF64x4Ceil:                 OpcodeVecF64x4CeilName,
-	OpcodeVecF64x4Floor:                OpcodeVecF64x4FloorName,
-	OpcodeVecF64x4Trunc:                OpcodeVecF64x4TruncName,
-	OpcodeVecF64x4Nearest:              OpcodeVecF64x4NearestName,
-	OpcodeVecF64x4Abs:                  OpcodeVecF64x4AbsName,
-	OpcodeVecF64x4Neg:                  OpcodeVecF64x4NegName,
-	OpcodeVecF64x4Sqrt:                 OpcodeVecF64x4SqrtName,
-	OpcodeVecF64x4Add:                  OpcodeVecF64x4AddName,
-	OpcodeVecF64x4Sub:                  OpcodeVecF64x4SubName,
-	OpcodeVecF64x4Mul:                  OpcodeVecF64x4MulName,
-	OpcodeVecF64x4Div:                  OpcodeVecF64x4DivName,
-	OpcodeVecF64x4Min:                  OpcodeVecF64x4MinName,
-	OpcodeVecF64x4Max:                  OpcodeVecF64x4MaxName,
-	OpcodeVecF64x4Pmin:                 OpcodeVecF64x4PminName,
-	OpcodeVecF64x4Pmax:                 OpcodeVecF64x4PmaxName,
+	OpcodeVecF64x2Ceil:                 OpcodeVecF64x2CeilName,
+	OpcodeVecF64x2Floor:                OpcodeVecF64x2FloorName,
+	OpcodeVecF64x2Trunc:                OpcodeVecF64x2TruncName,
+	OpcodeVecF64x2Nearest:              OpcodeVecF64x2NearestName,
+	OpcodeVecF64x2Abs:                  OpcodeVecF64x2AbsName,
+	OpcodeVecF64x2Neg:                  OpcodeVecF64x2NegName,
+	OpcodeVecF64x2Sqrt:                 OpcodeVecF64x2SqrtName,
+	OpcodeVecF64x2Add:                  OpcodeVecF64x2AddName,
+	OpcodeVecF64x2Sub:                  OpcodeVecF64x2SubName,
+	OpcodeVecF64x2Mul:                  OpcodeVecF64x2MulName,
+	OpcodeVecF64x2Div:                  OpcodeVecF64x2DivName,
+	OpcodeVecF64x2Min:                  OpcodeVecF64x2MinName,
+	OpcodeVecF64x2Max:                  OpcodeVecF64x2MaxName,
+	OpcodeVecF64x2Pmin:                 OpcodeVecF64x2PminName,
+	OpcodeVecF64x2Pmax:                 OpcodeVecF64x2PmaxName,
 	OpcodeVecI32x4TruncSatF32x4S:       OpcodeVecI32x4TruncSatF32x4SName,
 	OpcodeVecI32x4TruncSatF32x4U:       OpcodeVecI32x4TruncSatF32x4UName,
 	OpcodeVecF32x4ConvertI32x4S:        OpcodeVecF32x4ConvertI32x4SName,

@@ -504,4 +504,10 @@ var castAsGolangAsmInstruction = [...]obj.As{
 	amd64.PADDQ:     x86.APADDQ,
 	amd64.ADDPS:     x86.AADDPS,
 	amd64.ADDPD:     x86.AADDPD,
+	amd64.PSUBB:     x86.APSUBB,
+	amd64.PSUBW:     x86.APSUBW,
+	amd64.PSUBL:     x86.APSUBL,
+	amd64.PSUBQ:     x86.APSUBQ,
+	amd64.SUBPS:     x86.ASUBPS,
+	amd64.SUBPD:     x86.ASUBPD,
 }

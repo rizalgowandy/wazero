@@ -404,9 +404,24 @@ type compiler interface {
 	//
 	// https://www.w3.org/TR/2022/WD-wasm-core-2-20220419/valid/instructions.html#xref-syntax-instructions-syntax-instr-table-mathsf-table-fill-x
 	compileTableFill(*wazeroir.OperationTableFill) error
-	// compileConstV128 adds instructions to push a constant V128 value onto the stack.
+	// compileV128Const adds instructions to push a constant V128 value onto the stack.
 	// See wasm.OpcodeVecV128Const
-	compileConstV128(*wazeroir.OperationConstV128) error
-	// compileAddV128 adds instruction to add two vector values whose shape is specified as `o.Shape`.
-	compileAddV128(o *wazeroir.OperationV128Add) error
+	compileV128Const(*wazeroir.OperationV128Const) error
+	// compileV128Add adds instruction to add two vector values whose shape is specified as `o.Shape`.
+	// See wasm.OpcodeVecI8x16Add wasm.OpcodeVecI16x8Add wasm.OpcodeVecI32x4Add wasm.OpcodeVecI64x2Add wasm.OpcodeVecF32x4Add wasm.OpcodeVecF64x2Add
+	compileV128Add(o *wazeroir.OperationV128Add) error
+	// compileV128Sub adds instruction to subtract two vector values whose shape is specified as `o.Shape`.
+	// See wasm.OpcodeVecI8x16Sub wasm.OpcodeVecI16x8Sub wasm.OpcodeVecI32x4Sub wasm.OpcodeVecI64x2Sub wasm.OpcodeVecF32x4Sub wasm.OpcodeVecF64x2Sub
+	compileV128Sub(o *wazeroir.OperationV128Sub) error
+	compileV128Load(o *wazeroir.OperationV128Load) error
+	compileV128LoadLane(o *wazeroir.OperationV128LoadLane) error
+	compileV128Store(o *wazeroir.OperationV128Store) error
+	compileV128StoreLane(o *wazeroir.OperationV128StoreLane) error
+	compileV128ExtractLane(o *wazeroir.OperationV128ExtractLane) error
+	compileV128ReplaceLane(o *wazeroir.OperationV128ReplaceLane) error
+	compileV128Splat(o *wazeroir.OperationV128Splat) error
+	compileV128Shuffle(o *wazeroir.OperationV128Shuffle) error
+	compileV128Swizzle(o *wazeroir.OperationV128Swizzle) error
+	compileV128AnyTrue(o *wazeroir.OperationV128AnyTrue) error
+	compileV128AllTrue(o *wazeroir.OperationV128AllTrue) error
 }

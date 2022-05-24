@@ -1206,13 +1206,13 @@ func (o *OperationTableFill) Kind() OperationKind {
 	return OperationKindTableFill
 }
 
-// OperationConstV128 implements Operation.
-type OperationConstV128 struct {
+// OperationV128Const implements Operation.
+type OperationV128Const struct {
 	Lo, Hi uint64
 }
 
 // Kind implements Operation.Kind.
-func (o *OperationConstV128) Kind() OperationKind {
+func (o *OperationV128Const) Kind() OperationKind {
 	return OperationKindV128Const
 }
 
@@ -1298,19 +1298,19 @@ const (
 	LoadV128Type64zero
 )
 
-// OperationLoadV128 implements Operation.
-type OperationLoadV128 struct {
+// OperationV128Load implements Operation.
+type OperationV128Load struct {
 	Type LoadV128Type
 	Arg  *MemoryArg
 }
 
 // Kind implements Operation.Kind.
-func (o *OperationLoadV128) Kind() OperationKind {
+func (o *OperationV128Load) Kind() OperationKind {
 	return OperationKindV128Load
 }
 
-// OperationLoadV128Lane implements Operation.
-type OperationLoadV128Lane struct {
+// OperationV128LoadLane implements Operation.
+type OperationV128LoadLane struct {
 	// LaneIndex is >=0 && <(128/LaneSize).
 	LaneIndex byte
 	// LaneSize is either 8, 16, 32, or 64.
@@ -1319,22 +1319,22 @@ type OperationLoadV128Lane struct {
 }
 
 // Kind implements Operation.Kind.
-func (o *OperationLoadV128Lane) Kind() OperationKind {
+func (o *OperationV128LoadLane) Kind() OperationKind {
 	return OperationKindV128LoadLane
 }
 
-// OperationStoreV128 implements Operation.
-type OperationStoreV128 struct {
+// OperationV128Store implements Operation.
+type OperationV128Store struct {
 	Arg *MemoryArg
 }
 
 // Kind implements Operation.Kind.
-func (o *OperationStoreV128) Kind() OperationKind {
+func (o *OperationV128Store) Kind() OperationKind {
 	return OperationKindV128Store
 }
 
-// OperationStoreV128Lane implements Operation.
-type OperationStoreV128Lane struct {
+// OperationV128StoreLane implements Operation.
+type OperationV128StoreLane struct {
 	// LaneIndex is >=0 && <(128/LaneSize).
 	LaneIndex byte
 	// LaneSize is either 8, 16, 32, or 64.
@@ -1343,7 +1343,7 @@ type OperationStoreV128Lane struct {
 }
 
 // Kind implements Operation.Kind.
-func (o *OperationStoreV128Lane) Kind() OperationKind {
+func (o *OperationV128StoreLane) Kind() OperationKind {
 	return OperationKindV128StoreLane
 }
 
