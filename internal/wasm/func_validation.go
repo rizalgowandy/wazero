@@ -1107,7 +1107,7 @@ func (m *Module) validateFunctionWithMaxStackValues(
 					OpcodeVecV128Load32x2s, OpcodeVecV128Load32x2u:
 					maxAlign = 64 / 8
 				case OpcodeVecV128Load8Splat:
-					maxAlign = 8 / 8
+					maxAlign = 1
 				case OpcodeVecV128Load16Splat:
 					maxAlign = 16 / 8
 				case OpcodeVecV128Load32Splat:
@@ -1484,7 +1484,7 @@ var vecStoreLanes = [...]struct {
 	OpcodeVecV128Store64Lane: {alignMax: 64 / 8, laneCeil: 128 / 64},
 	OpcodeVecV128Store32Lane: {alignMax: 32 / 8, laneCeil: 128 / 32},
 	OpcodeVecV128Store16Lane: {alignMax: 16 / 8, laneCeil: 128 / 16},
-	OpcodeVecV128Store8Lane:  {alignMax: 8 / 8, laneCeil: 128 / 8},
+	OpcodeVecV128Store8Lane:  {alignMax: 1, laneCeil: 128 / 8},
 }
 
 var vecLoadLanes = [...]struct {
@@ -1494,7 +1494,7 @@ var vecLoadLanes = [...]struct {
 	OpcodeVecV128Load64Lane: {alignMax: 64 / 8, laneCeil: 128 / 64},
 	OpcodeVecV128Load32Lane: {alignMax: 32 / 8, laneCeil: 128 / 32},
 	OpcodeVecV128Load16Lane: {alignMax: 16 / 8, laneCeil: 128 / 16},
-	OpcodeVecV128Load8Lane:  {alignMax: 8 / 8, laneCeil: 128 / 8},
+	OpcodeVecV128Load8Lane:  {alignMax: 1, laneCeil: 128 / 8},
 }
 
 var vecSplatValueTypes = [...]ValueType{
