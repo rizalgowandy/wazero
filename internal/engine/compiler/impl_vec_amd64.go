@@ -112,6 +112,42 @@ func (c *amd64Compiler) compileV128Sub(o *wazeroir.OperationV128Sub) error {
 }
 
 func (c *amd64Compiler) compileV128Load(o *wazeroir.OperationV128Load) error {
+
+	switch o.Type {
+	case wazeroir.LoadV128Type128:
+		// MOVDQU
+	case wazeroir.LoadV128Type8x8s:
+		// PMOVSXBW
+	case wazeroir.LoadV128Type8x8u:
+		// PMOVZXBW
+	case wazeroir.LoadV128Type16x4s:
+		// PMOVSXWD
+	case wazeroir.LoadV128Type16x4u:
+		// PMOVZXWD
+	case wazeroir.LoadV128Type32x2s:
+		// PMOVSXDQ
+	case wazeroir.LoadV128Type32x2u:
+		// PMOVZXDQ
+	case wazeroir.LoadV128Type8Splat:
+		// https://stackoverflow.com/questions/36191748/difference-between-load1-and-broadcast-intrinsics
+		// pinsrb	$0, %ecx, %xmm0
+		// pxor	%xmm13, %xmm13
+		// pshufb	%xmm13, %xmm0
+	case wazeroir.LoadV128Type16Splat:
+		// pinsrw $0, %ecx, %xmm0
+		// pinsrw $1, %ecx, %xmm0
+		// pshufd $0, %xmm0, %xmm0        # xmm0 = xmm0[0,0,0,0]
+	case wazeroir.LoadV128Type32Splat:
+		// pinsrd $0, (%rcx,%rax), %xmm0
+		// pshufd $0, %xmm0, %xmm0        # xmm0 = xmm0[0,0,0,0]
+	case wazeroir.LoadV128Type64Splat:
+	// insrq	$0, (%rcx,%rax), %xmm0
+	// pinsrq	$1, (%rcx,%rax), %xmm0
+	case wazeroir.LoadV128Type32zero:
+		// MOVL
+	case wazeroir.LoadV128Type64zero:
+		// MOVQ
+	}
 	return nil
 }
 

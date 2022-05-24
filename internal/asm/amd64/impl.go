@@ -1023,7 +1023,7 @@ var registerToRegisterOpcode = map[asm.Instruction]struct {
 	mandatoryPrefix                  byte
 	srcOnModRMReg                    bool
 	isSrc8bit                        bool
-	needMode                         bool
+	needArg                          bool
 	requireSrcFloat, requireDstFloat bool
 }{
 	// https://www.felixcloutier.com/x86/add
@@ -1112,9 +1112,9 @@ var registerToRegisterOpcode = map[asm.Instruction]struct {
 	POPCNTL: {mandatoryPrefix: 0xf3, opcode: []byte{0x0f, 0xb8}},
 	POPCNTQ: {mandatoryPrefix: 0xf3, opcode: []byte{0x0f, 0xb8}, rPrefix: RexPrefixW},
 	// https://www.felixcloutier.com/x86/roundss
-	ROUNDSS: {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x3a, 0x0a}, needMode: true, requireSrcFloat: true, requireDstFloat: true},
+	ROUNDSS: {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x3a, 0x0a}, needArg: true, requireSrcFloat: true, requireDstFloat: true},
 	// https://www.felixcloutier.com/x86/roundsd
-	ROUNDSD: {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x3a, 0x0b}, needMode: true, requireSrcFloat: true, requireDstFloat: true},
+	ROUNDSD: {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x3a, 0x0b}, needArg: true, requireSrcFloat: true, requireDstFloat: true},
 	// https://www.felixcloutier.com/x86/sqrtss
 	SQRTSS: {mandatoryPrefix: 0xf3, opcode: []byte{0x0f, 0x51}, requireSrcFloat: true, requireDstFloat: true},
 	// https://www.felixcloutier.com/x86/sqrtsd
@@ -1143,7 +1143,13 @@ var registerToRegisterOpcode = map[asm.Instruction]struct {
 	XORPD: {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x57}, requireSrcFloat: true, requireDstFloat: true},
 	XORPS: {opcode: []byte{0x0f, 0x57}, requireSrcFloat: true, requireDstFloat: true},
 	// https://www.felixcloutier.com/x86/pinsrb:pinsrd:pinsrq
-	PINSRQ: {mandatoryPrefix: 0x66, rPrefix: RexPrefixW, opcode: []byte{0x0f, 0x3a, 0x22}, requireSrcFloat: false, requireDstFloat: true, needMode: true},
+	PINSRB: {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x3a, 0x20}, requireSrcFloat: false, requireDstFloat: true, needArg: true},
+	// https://www.felixcloutier.com/x86/pinsrw
+	PINSRW: {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0xc4}, requireSrcFloat: false, requireDstFloat: true, needArg: true},
+	// https://www.felixcloutier.com/x86/pinsrb:pinsrd:pinsrq
+	PINSRD: {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x3a, 0x22}, requireSrcFloat: false, requireDstFloat: true, needArg: true},
+	// https://www.felixcloutier.com/x86/pinsrb:pinsrd:pinsrq
+	PINSRQ: {mandatoryPrefix: 0x66, rPrefix: RexPrefixW, opcode: []byte{0x0f, 0x3a, 0x22}, requireSrcFloat: false, requireDstFloat: true, needArg: true},
 	// https://www.felixcloutier.com/x86/movdqu:vmovdqu8:vmovdqu16:vmovdqu32:vmovdqu64
 	MOVDQU: {mandatoryPrefix: 0xf3, opcode: []byte{0x0f, 0x6f}, requireSrcFloat: true, requireDstFloat: true},
 	PADDB:  {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0xfc}, requireSrcFloat: true, requireDstFloat: true},
@@ -1158,6 +1164,9 @@ var registerToRegisterOpcode = map[asm.Instruction]struct {
 	ADDPD:  {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x58}, requireSrcFloat: true, requireDstFloat: true},
 	SUBPS:  {opcode: []byte{0x0f, 0x5c}, requireSrcFloat: true, requireDstFloat: true},
 	SUBPD:  {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x5c}, requireSrcFloat: true, requireDstFloat: true},
+	PXOR:   {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0xef}, requireSrcFloat: true, requireDstFloat: true},
+	PSHUFB: {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x38, 0x0}, requireSrcFloat: true, requireDstFloat: true},
+	PSHUFD: {mandatoryPrefix: 0x66, opcode: []byte{0x0f, 0x70}, requireSrcFloat: true, requireDstFloat: true, needArg: true},
 }
 
 var RegisterToRegisterShiftOpcode = map[asm.Instruction]struct {
@@ -1279,7 +1288,7 @@ func (a *AssemblerImpl) EncodeRegisterToRegister(n *NodeImpl) (err error) {
 
 		a.Buf.WriteByte(modRM)
 
-		if op.needMode {
+		if op.needArg {
 			a.WriteConst(int64(n.Arg), 8)
 		}
 		return nil

@@ -824,6 +824,12 @@ func TestAssemblerImpl_EncodeRegisterToRegister(t *testing.T) {
 		{instruction: amd64.SUBPD, srcRegs: floatRegisters, DstRegs: floatRegisters},
 		{instruction: amd64.PINSRQ, srcRegs: intRegisters, DstRegs: floatRegisters, arg: 1},
 		{instruction: amd64.PINSRQ, srcRegs: intRegisters, DstRegs: floatRegisters, arg: 0},
+		{instruction: amd64.PINSRD, srcRegs: intRegisters, DstRegs: floatRegisters, arg: 1},
+		{instruction: amd64.PINSRD, srcRegs: intRegisters, DstRegs: floatRegisters, arg: 0},
+		{instruction: amd64.PINSRW, srcRegs: intRegisters, DstRegs: floatRegisters, arg: 1},
+		{instruction: amd64.PINSRW, srcRegs: intRegisters, DstRegs: floatRegisters, arg: 0},
+		{instruction: amd64.PINSRB, srcRegs: intRegisters, DstRegs: floatRegisters, arg: 1},
+		{instruction: amd64.PINSRB, srcRegs: intRegisters, DstRegs: floatRegisters, arg: 0},
 		{instruction: amd64.ADDL, srcRegs: intRegisters, DstRegs: intRegisters},
 		{instruction: amd64.ADDQ, srcRegs: intRegisters, DstRegs: intRegisters},
 		{instruction: amd64.ADDSD, srcRegs: floatRegisters, DstRegs: floatRegisters},
@@ -911,6 +917,10 @@ func TestAssemblerImpl_EncodeRegisterToRegister(t *testing.T) {
 		{instruction: amd64.XORPD, srcRegs: floatRegisters, DstRegs: floatRegisters},
 		{instruction: amd64.XORPS, srcRegs: floatRegisters, DstRegs: floatRegisters},
 		{instruction: amd64.XORQ, srcRegs: intRegisters, DstRegs: intRegisters},
+		{instruction: amd64.PXOR, srcRegs: floatRegisters, DstRegs: floatRegisters},
+		{instruction: amd64.PSHUFB, srcRegs: floatRegisters, DstRegs: floatRegisters},
+		{instruction: amd64.PSHUFD, srcRegs: floatRegisters, DstRegs: floatRegisters, arg: 0},
+		{instruction: amd64.PSHUFD, srcRegs: floatRegisters, DstRegs: floatRegisters, arg: 1},
 	}
 
 	for _, tt := range tests {
@@ -967,7 +977,10 @@ func TestAssemblerImpl_EncodeRegisterToRegister(t *testing.T) {
 							// TODO: remove golang-asm dependency in tests.
 							goasm, err := newGolangAsmAssembler()
 							require.NoError(t, err)
-							if tc.instruction == amd64.ROUNDSD || tc.instruction == amd64.ROUNDSS || tc.instruction == amd64.PINSRQ {
+							if tc.instruction == amd64.ROUNDSD || tc.instruction == amd64.ROUNDSS ||
+								tc.instruction == amd64.PINSRQ || tc.instruction == amd64.PINSRD ||
+								tc.instruction == amd64.PINSRW || tc.instruction == amd64.PINSRB ||
+								tc.instruction == amd64.PSHUFD {
 								goasm.CompileRegisterToRegisterWithArg(tc.instruction, srcReg, DstReg, tc.arg)
 							} else {
 								goasm.CompileRegisterToRegister(tc.instruction, srcReg, DstReg)
@@ -981,7 +994,6 @@ func TestAssemblerImpl_EncodeRegisterToRegister(t *testing.T) {
 								Arg: tc.arg,
 							})
 							require.NoError(t, err)
-							// fmt.Printf("modRM: want: 0b%b, got: 0b%b\n", bs[1], a.Buf.Bytes()[1])
 							require.Equal(t, bs, a.Buf.Bytes())
 						})
 					}
