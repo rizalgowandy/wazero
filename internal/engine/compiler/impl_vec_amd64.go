@@ -139,7 +139,7 @@ func (c *amd64Compiler) compileV128Load(o *wazeroir.OperationV128Load) error {
 		if err != nil {
 			return err
 		}
-		c.assembler.CompileMemoryWithIndexToRegister(amd64.MOVB, amd64ReservedRegisterForMemory, -1,
+		c.assembler.CompileMemoryWithIndexToRegister(amd64.MOVBQZX, amd64ReservedRegisterForMemory, -1,
 			reg, 1, reg)
 		// pinsrb   $0, reg, result
 		// pxor	    tmpVReg, tmpVReg
@@ -157,7 +157,7 @@ func (c *amd64Compiler) compileV128Load(o *wazeroir.OperationV128Load) error {
 		if err != nil {
 			return err
 		}
-		c.assembler.CompileMemoryWithIndexToRegister(amd64.MOVB, amd64ReservedRegisterForMemory, -2,
+		c.assembler.CompileMemoryWithIndexToRegister(amd64.MOVWQZX, amd64ReservedRegisterForMemory, -2,
 			reg, 1, reg)
 		// pinsrw $0, reg, result
 		// pinsrw $1, reg, result
@@ -170,7 +170,7 @@ func (c *amd64Compiler) compileV128Load(o *wazeroir.OperationV128Load) error {
 		if err != nil {
 			return err
 		}
-		c.assembler.CompileMemoryWithIndexToRegister(amd64.MOVB, amd64ReservedRegisterForMemory, -4,
+		c.assembler.CompileMemoryWithIndexToRegister(amd64.MOVLQZX, amd64ReservedRegisterForMemory, -4,
 			reg, 1, reg)
 		// pinsrd $0, reg, result
 		// pshufd $0, result, result (result = result[0,0,0,0])
@@ -181,7 +181,7 @@ func (c *amd64Compiler) compileV128Load(o *wazeroir.OperationV128Load) error {
 		if err != nil {
 			return err
 		}
-		c.assembler.CompileMemoryWithIndexToRegister(amd64.MOVB, amd64ReservedRegisterForMemory, -8,
+		c.assembler.CompileMemoryWithIndexToRegister(amd64.MOVQ, amd64ReservedRegisterForMemory, -8,
 			reg, 1, reg)
 		// pinsrq $0, reg, result
 		// pinsrq $1, reg, result

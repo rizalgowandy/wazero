@@ -245,6 +245,79 @@ func TestCompiler_compileV128Load(t *testing.T) {
 				0, 0, 0, 0, 0, 0, 0, 0,
 			},
 		},
+		{
+			name: "8splat offset=0", loadType: wazeroir.LoadV128Type8Splat, offset: 0,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+				})
+			},
+			exp: [16]byte{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+		},
+		{
+			name: "8splat offset=1", loadType: wazeroir.LoadV128Type8Splat, offset: 1,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+				})
+			},
+			exp: [16]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+				0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+		},
+		{
+			name: "16splat offset=0", loadType: wazeroir.LoadV128Type16Splat, offset: 0,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+				})
+			},
+			exp: [16]byte{1, 0xff, 1, 0xff, 1, 0xff, 1, 0xff, 1, 0xff, 1, 0xff, 1, 0xff, 1, 0xff},
+		},
+		{
+			name: "16splat offset=5", loadType: wazeroir.LoadV128Type16Splat, offset: 5,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+				})
+			},
+			exp: [16]byte{6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7},
+		},
+		{
+			name: "32splat offset=0", loadType: wazeroir.LoadV128Type32Splat, offset: 0,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+				})
+			},
+			exp: [16]byte{1, 0xff, 3, 0xff, 1, 0xff, 3, 0xff, 1, 0xff, 3, 0xff, 1, 0xff, 3, 0xff},
+		},
+		{
+			name: "32splat offset=1", loadType: wazeroir.LoadV128Type32Splat, offset: 1,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+				})
+			},
+			exp: [16]byte{0xff, 3, 0xff, 5, 0xff, 3, 0xff, 5, 0xff, 3, 0xff, 5, 0xff, 3, 0xff, 5},
+		},
+		{
+			name: "64splat offset=0", loadType: wazeroir.LoadV128Type64Splat, offset: 0,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+				})
+			},
+			exp: [16]byte{1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 1, 0xff, 3, 0xff, 5, 6, 7, 0xff},
+		},
+		{
+			name: "64splat offset=1", loadType: wazeroir.LoadV128Type64Splat, offset: 1,
+			memSetupFn: func(buf []byte) {
+				copy(buf, []byte{
+					1, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff,
+				})
+			},
+			exp: [16]byte{0xff, 3, 0xff, 5, 6, 7, 0xff, 9, 0xff, 3, 0xff, 5, 6, 7, 0xff, 9},
+		},
 	}
 
 	for _, tc := range tests {
