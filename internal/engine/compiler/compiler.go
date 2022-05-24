@@ -408,5 +408,5 @@ type compiler interface {
 	// See wasm.OpcodeVecV128Const
 	compileConstV128(*wazeroir.OperationConstV128) error
 	// compileAddV128 adds instruction to add two vector values whose shape is specified as `o.Shape`.
-	compileAddV128(o *wazeroir.OperationAddV128) error
+	compileAddV128(o *wazeroir.OperationV128Add) error
 }

@@ -38,7 +38,7 @@ func (c *arm64Compiler) compileConstV128(o *wazeroir.OperationConstV128) error {
 	return nil
 }
 
-func (c *arm64Compiler) compileAddV128(o *wazeroir.OperationAddV128) error {
+func (c *arm64Compiler) compileAddV128(o *wazeroir.OperationV128Add) error {
 	c.locationStack.pop() // skip higher 64-bits.
 	x1Low := c.locationStack.pop()
 	if err := c.compileEnsureOnGeneralPurposeRegister(x1Low); err != nil {

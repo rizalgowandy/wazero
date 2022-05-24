@@ -183,7 +183,7 @@ func formatOperation(w io.StringWriter, b Operation) {
 		str = fmt.Sprintf("%s.extend_from.%s", out, in)
 	case *OperationConstV128:
 		str = fmt.Sprintf("v128.const [%#x, %#x]", o.Lo, o.Hi)
-	case *OperationAddV128:
+	case *OperationV128Add:
 		str = fmt.Sprintf("v128.add (shape=%s)", shapeName(o.Shape))
 	default:
 		panic("unreachable: a bug in wazeroir implementation")

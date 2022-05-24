@@ -43,7 +43,7 @@ func (c *amd64Compiler) compileConstV128(o *wazeroir.OperationConstV128) error {
 }
 
 // compileAddV128 implements compiler.compileAddV128 for amd64 architecture.
-func (c *amd64Compiler) compileAddV128(o *wazeroir.OperationAddV128) error {
+func (c *amd64Compiler) compileAddV128(o *wazeroir.OperationV128Add) error {
 	c.locationStack.pop() // skip higher 64-bits.
 	x2 := c.locationStack.pop()
 	if err := c.compileEnsureOnGeneralPurposeRegister(x2); err != nil {

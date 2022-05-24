@@ -1042,7 +1042,7 @@ func compileWasmFunction(_ wasm.Features, ir *wazeroir.CompilationResult) (*code
 			err = compiler.compileTableFill(o)
 		case *wazeroir.OperationConstV128:
 			err = compiler.compileConstV128(o)
-		case *wazeroir.OperationAddV128:
+		case *wazeroir.OperationV128Add:
 			err = compiler.compileAddV128(o)
 		default:
 			err = errors.New("unsupported")
