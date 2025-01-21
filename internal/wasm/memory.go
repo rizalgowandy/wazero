@@ -1,16 +1,20 @@
 package wasm
 
 import (
-	"bytes"
-	"context"
+	"container/list"
 	"encoding/binary"
 	"fmt"
 	"math"
 	"reflect"
 	"sync"
+	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
+	"github.com/tetratelabs/wazero/internal/internalapi"
+	"github.com/tetratelabs/wazero/internal/wasmruntime"
 )
 
 const (
@@ -25,17 +29,13 @@ const (
 	MemoryPageSizeInBits = 16
 )
 
-// MemorySizer is the default function that derives min, capacity and max pages from decoded source. The capacity
-// returned is set to minPages and max defaults to MemoryLimitPages when maxPages is nil.
-var MemorySizer api.MemorySizer = func(minPages uint32, maxPages *uint32) (min, capacity, max uint32) {
-	if maxPages != nil {
-		return minPages, minPages, *maxPages
-	}
-	return minPages, minPages, MemoryLimitPages
-}
-
 // compile-time check to ensure MemoryInstance implements api.Memory
 var _ api.Memory = &MemoryInstance{}
+
+type waiters struct {
+	mux sync.Mutex
+	l   *list.List
+}
 
 // MemoryInstance represents a memory instance in a store, and implements api.Memory.
 //
@@ -43,60 +43,87 @@ var _ api.Memory = &MemoryInstance{}
 // wasm.Store Memories index zero: `store.Memories[0]`
 // See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#memory-instances%E2%91%A0.
 type MemoryInstance struct {
+	internalapi.WazeroOnlyType
+
 	Buffer        []byte
 	Min, Cap, Max uint32
-	// mux is used to prevent overlapping calls to Grow.
-	mux sync.RWMutex
+	Shared        bool
+	// definition is known at compile time.
+	definition api.MemoryDefinition
+
+	// Mux is used in interpreter mode to prevent overlapping calls to atomic instructions,
+	// introduced with WebAssembly threads proposal, and in compiler mode to make memory modifications
+	// within Grow non-racy for the Go race detector.
+	Mux sync.Mutex
+
+	// waiters implements atomic wait and notify. It is implemented similarly to golang.org/x/sync/semaphore,
+	// with a fixed weight of 1 and no spurious notifications.
+	waiters sync.Map
+
+	// ownerModuleEngine is the module engine that owns this memory instance.
+	ownerModuleEngine ModuleEngine
+
+	expBuffer experimental.LinearMemory
 }
 
 // NewMemoryInstance creates a new instance based on the parameters in the SectionIDMemory.
-func NewMemoryInstance(memSec *Memory) *MemoryInstance {
-	min := MemoryPagesToBytesNum(memSec.Min)
-	capacity := MemoryPagesToBytesNum(memSec.Cap)
-	return &MemoryInstance{
-		Buffer: make([]byte, min, capacity),
-		Min:    memSec.Min,
-		Cap:    memSec.Cap,
-		Max:    memSec.Max,
+func NewMemoryInstance(memSec *Memory, allocator experimental.MemoryAllocator, moduleEngine ModuleEngine) *MemoryInstance {
+	minBytes := MemoryPagesToBytesNum(memSec.Min)
+	capBytes := MemoryPagesToBytesNum(memSec.Cap)
+	maxBytes := MemoryPagesToBytesNum(memSec.Max)
+
+	var buffer []byte
+	var expBuffer experimental.LinearMemory
+	if allocator != nil {
+		expBuffer = allocator.Allocate(capBytes, maxBytes)
+		buffer = expBuffer.Reallocate(minBytes)
+		_ = buffer[:minBytes] // Bounds check that the minimum was allocated.
+	} else if memSec.IsShared {
+		// Shared memory needs a fixed buffer, so allocate with the maximum size.
+		//
+		// The rationale as to why we can simply use make([]byte) to a fixed buffer is that Go's GC is non-relocating.
+		// That is not a part of Go spec, but is well-known thing in Go community (wazero's compiler heavily relies on it!)
+		// 	* https://github.com/go4org/unsafe-assume-no-moving-gc
+		//
+		// Also, allocating Max here isn't harmful as the Go runtime uses mmap for large allocations, therefore,
+		// the memory buffer allocation here is virtual and doesn't consume physical memory until it's used.
+		// 	* https://github.com/golang/go/blob/8121604559035734c9677d5281bbdac8b1c17a1e/src/runtime/malloc.go#L1059
+		//	* https://github.com/golang/go/blob/8121604559035734c9677d5281bbdac8b1c17a1e/src/runtime/malloc.go#L1165
+		buffer = make([]byte, minBytes, maxBytes)
+	} else {
+		buffer = make([]byte, minBytes, capBytes)
 	}
+	return &MemoryInstance{
+		Buffer:            buffer,
+		Min:               memSec.Min,
+		Cap:               memoryBytesNumToPages(uint64(cap(buffer))),
+		Max:               memSec.Max,
+		Shared:            memSec.IsShared,
+		expBuffer:         expBuffer,
+		ownerModuleEngine: moduleEngine,
+	}
+}
+
+// Definition implements the same method as documented on api.Memory.
+func (m *MemoryInstance) Definition() api.MemoryDefinition {
+	return m.definition
 }
 
 // Size implements the same method as documented on api.Memory.
-func (m *MemoryInstance) Size(_ context.Context) uint32 {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
-	return m.size()
-}
-
-// IndexByte implements the same method as documented on api.Memory.
-func (m *MemoryInstance) IndexByte(_ context.Context, offset uint32, c byte) (uint32, bool) {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
-	if offset >= uint32(len(m.Buffer)) {
-		return 0, false
-	}
-	b := m.Buffer[offset:]
-	if result := bytes.IndexByte(b, c); result == -1 {
-		return 0, false
-	} else {
-		return uint32(result) + offset, true
-	}
+func (m *MemoryInstance) Size() uint32 {
+	return uint32(len(m.Buffer))
 }
 
 // ReadByte implements the same method as documented on api.Memory.
-func (m *MemoryInstance) ReadByte(_ context.Context, offset uint32) (byte, bool) {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
-	if offset >= m.size() {
+func (m *MemoryInstance) ReadByte(offset uint32) (byte, bool) {
+	if !m.hasSize(offset, 1) {
 		return 0, false
 	}
 	return m.Buffer[offset], true
 }
 
 // ReadUint16Le implements the same method as documented on api.Memory.
-func (m *MemoryInstance) ReadUint16Le(_ context.Context, offset uint32) (uint16, bool) {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
+func (m *MemoryInstance) ReadUint16Le(offset uint32) (uint16, bool) {
 	if !m.hasSize(offset, 2) {
 		return 0, false
 	}
@@ -104,16 +131,12 @@ func (m *MemoryInstance) ReadUint16Le(_ context.Context, offset uint32) (uint16,
 }
 
 // ReadUint32Le implements the same method as documented on api.Memory.
-func (m *MemoryInstance) ReadUint32Le(_ context.Context, offset uint32) (uint32, bool) {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
+func (m *MemoryInstance) ReadUint32Le(offset uint32) (uint32, bool) {
 	return m.readUint32Le(offset)
 }
 
 // ReadFloat32Le implements the same method as documented on api.Memory.
-func (m *MemoryInstance) ReadFloat32Le(_ context.Context, offset uint32) (float32, bool) {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
+func (m *MemoryInstance) ReadFloat32Le(offset uint32) (float32, bool) {
 	v, ok := m.readUint32Le(offset)
 	if !ok {
 		return 0, false
@@ -122,16 +145,12 @@ func (m *MemoryInstance) ReadFloat32Le(_ context.Context, offset uint32) (float3
 }
 
 // ReadUint64Le implements the same method as documented on api.Memory.
-func (m *MemoryInstance) ReadUint64Le(_ context.Context, offset uint32) (uint64, bool) {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
+func (m *MemoryInstance) ReadUint64Le(offset uint32) (uint64, bool) {
 	return m.readUint64Le(offset)
 }
 
 // ReadFloat64Le implements the same method as documented on api.Memory.
-func (m *MemoryInstance) ReadFloat64Le(_ context.Context, offset uint32) (float64, bool) {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
+func (m *MemoryInstance) ReadFloat64Le(offset uint32) (float64, bool) {
 	v, ok := m.readUint64Le(offset)
 	if !ok {
 		return 0, false
@@ -140,20 +159,16 @@ func (m *MemoryInstance) ReadFloat64Le(_ context.Context, offset uint32) (float6
 }
 
 // Read implements the same method as documented on api.Memory.
-func (m *MemoryInstance) Read(_ context.Context, offset, byteCount uint32) ([]byte, bool) {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
-	if !m.hasSize(offset, byteCount) {
+func (m *MemoryInstance) Read(offset, byteCount uint32) ([]byte, bool) {
+	if !m.hasSize(offset, uint64(byteCount)) {
 		return nil, false
 	}
 	return m.Buffer[offset : offset+byteCount : offset+byteCount], true
 }
 
 // WriteByte implements the same method as documented on api.Memory.
-func (m *MemoryInstance) WriteByte(_ context.Context, offset uint32, v byte) bool {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
-	if offset >= m.size() {
+func (m *MemoryInstance) WriteByte(offset uint32, v byte) bool {
+	if !m.hasSize(offset, 1) {
 		return false
 	}
 	m.Buffer[offset] = v
@@ -161,9 +176,7 @@ func (m *MemoryInstance) WriteByte(_ context.Context, offset uint32, v byte) boo
 }
 
 // WriteUint16Le implements the same method as documented on api.Memory.
-func (m *MemoryInstance) WriteUint16Le(_ context.Context, offset uint32, v uint16) bool {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
+func (m *MemoryInstance) WriteUint16Le(offset uint32, v uint16) bool {
 	if !m.hasSize(offset, 2) {
 		return false
 	}
@@ -172,37 +185,37 @@ func (m *MemoryInstance) WriteUint16Le(_ context.Context, offset uint32, v uint1
 }
 
 // WriteUint32Le implements the same method as documented on api.Memory.
-func (m *MemoryInstance) WriteUint32Le(_ context.Context, offset, v uint32) bool {
-
+func (m *MemoryInstance) WriteUint32Le(offset, v uint32) bool {
 	return m.writeUint32Le(offset, v)
 }
 
 // WriteFloat32Le implements the same method as documented on api.Memory.
-func (m *MemoryInstance) WriteFloat32Le(_ context.Context, offset uint32, v float32) bool {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
+func (m *MemoryInstance) WriteFloat32Le(offset uint32, v float32) bool {
 	return m.writeUint32Le(offset, math.Float32bits(v))
 }
 
 // WriteUint64Le implements the same method as documented on api.Memory.
-func (m *MemoryInstance) WriteUint64Le(_ context.Context, offset uint32, v uint64) bool {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
+func (m *MemoryInstance) WriteUint64Le(offset uint32, v uint64) bool {
 	return m.writeUint64Le(offset, v)
 }
 
 // WriteFloat64Le implements the same method as documented on api.Memory.
-func (m *MemoryInstance) WriteFloat64Le(_ context.Context, offset uint32, v float64) bool {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
+func (m *MemoryInstance) WriteFloat64Le(offset uint32, v float64) bool {
 	return m.writeUint64Le(offset, math.Float64bits(v))
 }
 
 // Write implements the same method as documented on api.Memory.
-func (m *MemoryInstance) Write(_ context.Context, offset uint32, val []byte) bool {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
+func (m *MemoryInstance) Write(offset uint32, val []byte) bool {
+	if !m.hasSize(offset, uint64(len(val))) {
+		return false
+	}
+	copy(m.Buffer[offset:], val)
+	return true
+}
 
-	if !m.hasSize(offset, uint32(len(val))) {
+// WriteString implements the same method as documented on api.Memory.
+func (m *MemoryInstance) WriteString(offset uint32, val string) bool {
+	if !m.hasSize(offset, uint64(len(val))) {
 		return false
 	}
 	copy(m.Buffer[offset:], val)
@@ -215,41 +228,65 @@ func MemoryPagesToBytesNum(pages uint32) (bytesNum uint64) {
 }
 
 // Grow implements the same method as documented on api.Memory.
-func (m *MemoryInstance) Grow(_ context.Context, delta uint32) (result uint32, ok bool) {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
+func (m *MemoryInstance) Grow(delta uint32) (result uint32, ok bool) {
+	if m.Shared {
+		m.Mux.Lock()
+		defer m.Mux.Unlock()
+	}
 
-	// We take write-lock here as the following might result in a new slice
-	m.mux.Lock()
-	defer m.mux.Unlock()
-
-	currentPages := memoryBytesNumToPages(uint64(len(m.Buffer)))
+	currentPages := m.Pages()
 	if delta == 0 {
 		return currentPages, true
 	}
 
-	// If exceeds the max of memory size, we push -1 according to the spec.
 	newPages := currentPages + delta
-	if newPages > m.Max {
+	if newPages > m.Max || int32(delta) < 0 {
 		return 0, false
+	} else if m.expBuffer != nil {
+		buffer := m.expBuffer.Reallocate(MemoryPagesToBytesNum(newPages))
+		if buffer == nil {
+			// Allocator failed to grow.
+			return 0, false
+		}
+		if m.Shared {
+			if unsafe.SliceData(buffer) != unsafe.SliceData(m.Buffer) {
+				panic("shared memory cannot move, this is a bug in the memory allocator")
+			}
+			// We assume grow is called under a guest lock.
+			// But the memory length is accessed elsewhere,
+			// so use atomic to make the new length visible across threads.
+			atomicStoreLengthAndCap(&m.Buffer, uintptr(len(buffer)), uintptr(cap(buffer)))
+			m.Cap = memoryBytesNumToPages(uint64(cap(buffer)))
+		} else {
+			m.Buffer = buffer
+			m.Cap = newPages
+		}
 	} else if newPages > m.Cap { // grow the memory.
+		if m.Shared {
+			panic("shared memory cannot be grown, this is a bug in wazero")
+		}
 		m.Buffer = append(m.Buffer, make([]byte, MemoryPagesToBytesNum(delta))...)
 		m.Cap = newPages
-		return currentPages, true
 	} else { // We already have the capacity we need.
-		sp := (*reflect.SliceHeader)(unsafe.Pointer(&m.Buffer))
-		sp.Len = int(MemoryPagesToBytesNum(newPages))
-		return currentPages, true
+		if m.Shared {
+			// We assume grow is called under a guest lock.
+			// But the memory length is accessed elsewhere,
+			// so use atomic to make the new length visible across threads.
+			atomicStoreLength(&m.Buffer, uintptr(MemoryPagesToBytesNum(newPages)))
+		} else {
+			m.Buffer = m.Buffer[:MemoryPagesToBytesNum(newPages)]
+		}
 	}
+	m.ownerModuleEngine.MemoryGrown()
+	return currentPages, true
 }
 
-// PageSize returns the current memory buffer size in pages.
-func (m *MemoryInstance) PageSize(_ context.Context) (result uint32) {
-	// Note: If you use the context.Context param, don't forget to coerce nil to context.Background()!
-
+// Pages implements the same method as documented on api.Memory.
+func (m *MemoryInstance) Pages() (result uint32) {
 	return memoryBytesNumToPages(uint64(len(m.Buffer)))
 }
 
-// PagesToUnitOfBytes converts the pages to a human-readable form similar to what's specified. Ex. 1 -> "64Ki"
+// PagesToUnitOfBytes converts the pages to a human-readable form similar to what's specified. e.g. 1 -> "64Ki"
 //
 // See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#memory-instances%E2%91%A0
 func PagesToUnitOfBytes(pages uint32) string {
@@ -270,19 +307,34 @@ func PagesToUnitOfBytes(pages uint32) string {
 
 // Below are raw functions used to implement the api.Memory API:
 
+// Uses atomic write to update the length of a slice.
+func atomicStoreLengthAndCap(slice *[]byte, length uintptr, cap uintptr) {
+	//nolint:staticcheck
+	slicePtr := (*reflect.SliceHeader)(unsafe.Pointer(slice))
+	capPtr := (*uintptr)(unsafe.Pointer(&slicePtr.Cap))
+	atomic.StoreUintptr(capPtr, cap)
+	lenPtr := (*uintptr)(unsafe.Pointer(&slicePtr.Len))
+	atomic.StoreUintptr(lenPtr, length)
+}
+
+// Uses atomic write to update the length of a slice.
+func atomicStoreLength(slice *[]byte, length uintptr) {
+	//nolint:staticcheck
+	slicePtr := (*reflect.SliceHeader)(unsafe.Pointer(slice))
+	lenPtr := (*uintptr)(unsafe.Pointer(&slicePtr.Len))
+	atomic.StoreUintptr(lenPtr, length)
+}
+
 // memoryBytesNumToPages converts the given number of bytes into the number of pages.
 func memoryBytesNumToPages(bytesNum uint64) (pages uint32) {
 	return uint32(bytesNum >> MemoryPageSizeInBits)
 }
 
-// size returns the size in bytes of the buffer.
-func (m *MemoryInstance) size() uint32 {
-	return uint32(len(m.Buffer)) // We don't lock here because size can't become smaller.
-}
-
-// hasSize returns true if Len is sufficient for sizeInBytes at the given offset.
-func (m *MemoryInstance) hasSize(offset uint32, sizeInBytes uint32) bool {
-	return uint64(offset)+uint64(sizeInBytes) <= uint64(len(m.Buffer)) // uint64 prevents overflow on add
+// hasSize returns true if Len is sufficient for byteCount at the given offset.
+//
+// Note: This is always fine, because memory can grow, but never shrink.
+func (m *MemoryInstance) hasSize(offset uint32, byteCount uint64) bool {
+	return uint64(offset)+byteCount <= uint64(len(m.Buffer)) // uint64 prevents overflow on add
 }
 
 // readUint32Le implements ReadUint32Le without using a context. This is extracted as both ints and floats are stored in
@@ -321,4 +373,104 @@ func (m *MemoryInstance) writeUint64Le(offset uint32, v uint64) bool {
 	}
 	binary.LittleEndian.PutUint64(m.Buffer[offset:], v)
 	return true
+}
+
+// Wait32 suspends the caller until the offset is notified by a different agent.
+func (m *MemoryInstance) Wait32(offset uint32, exp uint32, timeout int64, reader func(mem *MemoryInstance, offset uint32) uint32) uint64 {
+	w := m.getWaiters(offset)
+	w.mux.Lock()
+
+	cur := reader(m, offset)
+	if cur != exp {
+		w.mux.Unlock()
+		return 1
+	}
+
+	return m.wait(w, timeout)
+}
+
+// Wait64 suspends the caller until the offset is notified by a different agent.
+func (m *MemoryInstance) Wait64(offset uint32, exp uint64, timeout int64, reader func(mem *MemoryInstance, offset uint32) uint64) uint64 {
+	w := m.getWaiters(offset)
+	w.mux.Lock()
+
+	cur := reader(m, offset)
+	if cur != exp {
+		w.mux.Unlock()
+		return 1
+	}
+
+	return m.wait(w, timeout)
+}
+
+func (m *MemoryInstance) wait(w *waiters, timeout int64) uint64 {
+	if w.l == nil {
+		w.l = list.New()
+	}
+
+	// The specification requires a trap if the number of existing waiters + 1 == 2^32, so we add a check here.
+	// In practice, it is unlikely the application would ever accumulate such a large number of waiters as it
+	// indicates several GB of RAM used just for the list of waiters.
+	// https://github.com/WebAssembly/threads/blob/main/proposals/threads/Overview.md#wait
+	if uint64(w.l.Len()+1) == 1<<32 {
+		w.mux.Unlock()
+		panic(wasmruntime.ErrRuntimeTooManyWaiters)
+	}
+
+	ready := make(chan struct{})
+	elem := w.l.PushBack(ready)
+	w.mux.Unlock()
+
+	if timeout < 0 {
+		<-ready
+		return 0
+	} else {
+		select {
+		case <-ready:
+			return 0
+		case <-time.After(time.Duration(timeout)):
+			// While we could see if the channel completed by now and ignore the timeout, similar to x/sync/semaphore,
+			// the Wasm spec doesn't specify this behavior, so we keep things simple by prioritizing the timeout.
+			w.mux.Lock()
+			w.l.Remove(elem)
+			w.mux.Unlock()
+			return 2
+		}
+	}
+}
+
+func (m *MemoryInstance) getWaiters(offset uint32) *waiters {
+	wAny, ok := m.waiters.Load(offset)
+	if !ok {
+		// The first time an address is waited on, simultaneous waits will cause extra allocations.
+		// Further operations will be loaded above, which is also the general pattern of usage with
+		// mutexes.
+		wAny, _ = m.waiters.LoadOrStore(offset, &waiters{})
+	}
+
+	return wAny.(*waiters)
+}
+
+// Notify wakes up at most count waiters at the given offset.
+func (m *MemoryInstance) Notify(offset uint32, count uint32) uint32 {
+	wAny, ok := m.waiters.Load(offset)
+	if !ok {
+		return 0
+	}
+	w := wAny.(*waiters)
+
+	w.mux.Lock()
+	defer w.mux.Unlock()
+	if w.l == nil {
+		return 0
+	}
+
+	res := uint32(0)
+	for num := w.l.Len(); num > 0 && res < count; num = w.l.Len() {
+		w := w.l.Remove(w.l.Front()).(chan struct{})
+		close(w)
+		res++
+	}
+
+	return res
 }

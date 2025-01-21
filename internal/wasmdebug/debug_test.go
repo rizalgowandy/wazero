@@ -16,9 +16,9 @@ func TestFuncName(t *testing.T) {
 		funcIdx                    uint32
 		expected                   string
 	}{ // Only tests a few edge cases to show what it might end up as.
-		{name: "empty", expected: ".[0]"},
+		{name: "empty", expected: ".$0"},
 		{name: "empty module", funcName: "y", expected: ".y"},
-		{name: "empty function", moduleName: "x", funcIdx: 255, expected: "x.[255]"},
+		{name: "empty function", moduleName: "x", funcIdx: 255, expected: "x.$255"},
 		{name: "looks like index in function", moduleName: "x", funcName: "[255]", expected: "x.[255]"},
 		{name: "no special characters", moduleName: "x", funcName: "y", expected: "x.y"},
 		{name: "dots in module", moduleName: "w.x", funcName: "y", expected: "w.x.y"},
@@ -64,12 +64,14 @@ func TestAddSignature(t *testing.T) {
 	}
 }
 
-func TestErrorBuilder(t *testing.T) {
-	argErr := errors.New("invalid argument")
-	rteErr := testRuntimeErr("index out of bounds")
-	i32 := api.ValueTypeI32
-	i32i32i32i32 := []api.ValueType{i32, i32, i32, i32}
+var (
+	argErr       = errors.New("invalid argument")
+	rteErr       = testRuntimeErr("index out of bounds")
+	i32          = api.ValueTypeI32
+	i32i32i32i32 = []api.ValueType{i32, i32, i32, i32}
+)
 
+func TestErrorBuilder(t *testing.T) {
 	tests := []struct {
 		name         string
 		build        func(ErrorBuilder) error
@@ -79,7 +81,7 @@ func TestErrorBuilder(t *testing.T) {
 		{
 			name: "one",
 			build: func(builder ErrorBuilder) error {
-				builder.AddFrame("x.y", nil, nil)
+				builder.AddFrame("x.y", nil, nil, nil)
 				return builder.FromRecovered(argErr)
 			},
 			expectedErr: `invalid argument (recovered by wazero)
@@ -90,8 +92,8 @@ wasm stack trace:
 		{
 			name: "two",
 			build: func(builder ErrorBuilder) error {
-				builder.AddFrame("wasi_snapshot_preview1.fd_write", i32i32i32i32, []api.ValueType{i32})
-				builder.AddFrame("x.y", nil, nil)
+				builder.AddFrame("wasi_snapshot_preview1.fd_write", i32i32i32i32, []api.ValueType{i32}, nil)
+				builder.AddFrame("x.y", nil, nil, nil)
 				return builder.FromRecovered(argErr)
 			},
 			expectedErr: `invalid argument (recovered by wazero)
@@ -101,30 +103,19 @@ wasm stack trace:
 			expectUnwrap: argErr,
 		},
 		{
-			name: "runtime.Error",
-			build: func(builder ErrorBuilder) error {
-				builder.AddFrame("wasi_snapshot_preview1.fd_write", i32i32i32i32, []api.ValueType{i32})
-				builder.AddFrame("x.y", nil, nil)
-				return builder.FromRecovered(rteErr)
-			},
-			expectedErr: `index out of bounds (recovered by wazero)
-wasm stack trace:
-	wasi_snapshot_preview1.fd_write(i32,i32,i32,i32) i32
-	x.y()`,
-			expectUnwrap: rteErr,
-		},
-		{
 			name: "wasmruntime.Error",
 			build: func(builder ErrorBuilder) error {
-				builder.AddFrame("wasi_snapshot_preview1.fd_write", i32i32i32i32, []api.ValueType{i32})
-				builder.AddFrame("x.y", nil, nil)
-				return builder.FromRecovered(wasmruntime.ErrRuntimeCallStackOverflow)
+				builder.AddFrame("wasi_snapshot_preview1.fd_write", i32i32i32i32, []api.ValueType{i32},
+					[]string{"/opt/homebrew/Cellar/tinygo/0.26.0/src/runtime/runtime_tinygowasm.go:73:6"})
+				builder.AddFrame("x.y", nil, nil, nil)
+				return builder.FromRecovered(wasmruntime.ErrRuntimeStackOverflow)
 			},
-			expectedErr: `wasm error: callstack overflow
+			expectedErr: `wasm error: stack overflow
 wasm stack trace:
 	wasi_snapshot_preview1.fd_write(i32,i32,i32,i32) i32
+		/opt/homebrew/Cellar/tinygo/0.26.0/src/runtime/runtime_tinygowasm.go:73:6
 	x.y()`,
-			expectUnwrap: wasmruntime.ErrRuntimeCallStackOverflow,
+			expectUnwrap: wasmruntime.ErrRuntimeStackOverflow,
 		},
 	}
 
@@ -138,6 +129,24 @@ wasm stack trace:
 	}
 }
 
+func TestErrorBuilderGoRuntimeError(t *testing.T) {
+	builder := NewErrorBuilder()
+	builder.AddFrame("wasi_snapshot_preview1.fd_write", i32i32i32i32, []api.ValueType{i32}, nil)
+	builder.AddFrame("x.y", nil, nil, nil)
+	withStackTrace := builder.FromRecovered(rteErr)
+
+	require.Equal(t, rteErr, errors.Unwrap(withStackTrace))
+
+	errStr := withStackTrace.Error()
+	require.Contains(t, errStr, `index out of bounds (recovered by wazero)
+wasm stack trace:
+	wasi_snapshot_preview1.fd_write(i32,i32,i32,i32) i32
+	x.y()`)
+	require.Contains(t, errStr, "Go runtime stack trace:")
+	require.Contains(t, errStr, "goroutine ")
+	require.Contains(t, errStr, "/internal/wasmdebug/debug_test.go")
+}
+
 // compile-time check to ensure testRuntimeErr implements runtime.Error.
 var _ runtime.Error = testRuntimeErr("")
 
@@ -147,4 +156,14 @@ func (e testRuntimeErr) RuntimeError() {}
 
 func (e testRuntimeErr) Error() string {
 	return string(e)
+}
+
+func Test_AddFrame_MaxFrame(t *testing.T) {
+	builder := NewErrorBuilder().(*stackTrace)
+	for i := 0; i < MaxFrames+10; i++ {
+		builder.AddFrame("x.y", nil, nil, []string{"a.go:1:2", "b.go:3:4"})
+	}
+	require.Equal(t, MaxFrames, builder.frameCount)
+	require.Equal(t, MaxFrames*3 /* frame + two inlined sources */ +1, len(builder.lines))
+	require.Equal(t, "... maybe followed by omitted frames", builder.lines[len(builder.lines)-1])
 }

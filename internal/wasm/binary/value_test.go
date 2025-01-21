@@ -1,8 +1,10 @@
 package binary
 
 import (
+	"bytes"
 	"testing"
 
+	"github.com/tetratelabs/wazero/internal/testing/binaryencoding"
 	"github.com/tetratelabs/wazero/internal/testing/require"
 	"github.com/tetratelabs/wazero/internal/wasm"
 )
@@ -105,8 +107,23 @@ func TestEncodeValTypes(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			bytes := encodeValTypes(tc.input)
+			bytes := binaryencoding.EncodeValTypes(tc.input)
 			require.Equal(t, tc.expected, bytes)
 		})
 	}
+}
+
+func Test_decodeUTF8(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		actual, n, err := decodeUTF8(bytes.NewReader([]byte{0, '?', '?'}), "")
+		require.NoError(t, err)
+		require.Equal(t, "", actual)
+		require.Equal(t, uint32(1), n)
+	})
+	t.Run("non-empty", func(t *testing.T) {
+		actual, n, err := decodeUTF8(bytes.NewReader([]byte{3, 'f', 'o', 'o', '?', '?'}), "")
+		require.NoError(t, err)
+		require.Equal(t, "foo", actual)
+		require.Equal(t, uint32(4), n)
+	})
 }

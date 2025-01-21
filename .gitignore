@@ -7,6 +7,9 @@
 *.dll
 *.so
 *.dylib
+/wazero
+build
+dist
 
 # Test binary, built with `go test -c`
 *.test
@@ -26,3 +29,17 @@ go.work
 # AssemblyScript
 node_modules
 package-lock.json
+
+# codecov.io
+/coverage.txt
+
+.vagrant
+
+zig-cache/
+zig-out/
+
+.DS_Store
+
+# Ignore compiled stdlib test cases.
+/internal/integration_test/stdlibs/testdata
+/internal/integration_test/libsodium/testdata

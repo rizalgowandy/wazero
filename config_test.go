@@ -1,17 +1,19 @@
 package wazero
 
 import (
+	"bytes"
 	"context"
-	"io"
-	"math"
-	"reflect"
+	_ "embed"
 	"testing"
-	"testing/fstest"
+	"time"
 
 	"github.com/tetratelabs/wazero/api"
-	"github.com/tetratelabs/wazero/internal/sys"
+	"github.com/tetratelabs/wazero/internal/fstest"
+	"github.com/tetratelabs/wazero/internal/platform"
+	internalsys "github.com/tetratelabs/wazero/internal/sys"
 	"github.com/tetratelabs/wazero/internal/testing/require"
 	"github.com/tetratelabs/wazero/internal/wasm"
+	"github.com/tetratelabs/wazero/sys"
 )
 
 func TestRuntimeConfig(t *testing.T) {
@@ -21,87 +23,57 @@ func TestRuntimeConfig(t *testing.T) {
 		expected RuntimeConfig
 	}{
 		{
-			name: "bulk-memory-operations",
+			name: "features",
 			with: func(c RuntimeConfig) RuntimeConfig {
-				return c.WithFeatureBulkMemoryOperations(true)
+				return c.WithCoreFeatures(api.CoreFeaturesV1)
 			},
 			expected: &runtimeConfig{
-				enabledFeatures: wasm.FeatureBulkMemoryOperations | wasm.FeatureReferenceTypes,
+				enabledFeatures: api.CoreFeaturesV1,
 			},
 		},
 		{
-			name: "multi-value",
+			name: "memoryLimitPages",
 			with: func(c RuntimeConfig) RuntimeConfig {
-				return c.WithFeatureMultiValue(true)
+				return c.WithMemoryLimitPages(10)
 			},
 			expected: &runtimeConfig{
-				enabledFeatures: wasm.FeatureMultiValue,
+				memoryLimitPages: 10,
 			},
 		},
 		{
-			name: "mutable-global",
+			name: "memoryCapacityFromMax",
 			with: func(c RuntimeConfig) RuntimeConfig {
-				return c.WithFeatureMutableGlobal(true)
+				return c.WithMemoryCapacityFromMax(true)
 			},
 			expected: &runtimeConfig{
-				enabledFeatures: wasm.FeatureMutableGlobal,
+				memoryCapacityFromMax: true,
 			},
 		},
 		{
-			name: "nontrapping-float-to-int-conversion",
+			name: "WithDebugInfoEnabled",
 			with: func(c RuntimeConfig) RuntimeConfig {
-				return c.WithFeatureNonTrappingFloatToIntConversion(true)
+				return c.WithDebugInfoEnabled(false)
 			},
 			expected: &runtimeConfig{
-				enabledFeatures: wasm.FeatureNonTrappingFloatToIntConversion,
+				dwarfDisabled: true, // dwarf is a more technical name and ok here.
 			},
 		},
 		{
-			name: "sign-extension-ops",
+			name: "WithCustomSections",
 			with: func(c RuntimeConfig) RuntimeConfig {
-				return c.WithFeatureSignExtensionOps(true)
+				return c.WithCustomSections(true)
 			},
 			expected: &runtimeConfig{
-				enabledFeatures: wasm.FeatureSignExtensionOps,
+				storeCustomSections: true,
 			},
 		},
 		{
-			name: "REC-wasm-core-1-20191205",
-			with: func(c RuntimeConfig) RuntimeConfig {
-				return c.WithFeatureSignExtensionOps(true).WithWasmCore1()
-			},
-			expected: &runtimeConfig{
-				enabledFeatures: wasm.Features20191205,
-			},
-		},
-		{
-			name: "WD-wasm-core-2-20220419",
-			with: func(c RuntimeConfig) RuntimeConfig {
-				return c.WithFeatureMutableGlobal(false).WithWasmCore2()
-			},
-			expected: &runtimeConfig{
-				enabledFeatures: wasm.Features20220419,
-			},
-		},
-		{
-			name: "reference-types",
-			with: func(c RuntimeConfig) RuntimeConfig {
-				return c.WithFeatureReferenceTypes(true)
-			},
-			expected: &runtimeConfig{
-				enabledFeatures: wasm.FeatureBulkMemoryOperations | wasm.FeatureReferenceTypes,
-			},
-		},
-		{
-			name: "simd",
-			with: func(c RuntimeConfig) RuntimeConfig {
-				return c.WithFeatureSIMD(true)
-			},
-			expected: &runtimeConfig{
-				enabledFeatures: wasm.FeatureSIMD,
-			},
+			name:     "WithCloseOnContextDone",
+			with:     func(c RuntimeConfig) RuntimeConfig { return c.WithCloseOnContextDone(true) },
+			expected: &runtimeConfig{ensureTermination: true},
 		},
 	}
+
 	for _, tt := range tests {
 		tc := tt
 
@@ -113,415 +85,426 @@ func TestRuntimeConfig(t *testing.T) {
 			require.Equal(t, &runtimeConfig{}, input)
 		})
 	}
-}
 
-func TestRuntimeConfig_FeatureToggle(t *testing.T) {
-	tests := []struct {
-		name          string
-		feature       wasm.Features
-		expectDefault bool
-		setFeature    func(RuntimeConfig, bool) RuntimeConfig
-	}{
-		{
-			name:          "bulk-memory-operations",
-			feature:       wasm.FeatureBulkMemoryOperations,
-			expectDefault: false,
-			setFeature: func(c RuntimeConfig, v bool) RuntimeConfig {
-				return c.WithFeatureBulkMemoryOperations(v)
-			},
-		},
-		{
-			name:          "multi-value",
-			feature:       wasm.FeatureMultiValue,
-			expectDefault: false,
-			setFeature: func(c RuntimeConfig, v bool) RuntimeConfig {
-				return c.WithFeatureMultiValue(v)
-			},
-		},
-		{
-			name:          "mutable-global",
-			feature:       wasm.FeatureMutableGlobal,
-			expectDefault: true,
-			setFeature: func(c RuntimeConfig, v bool) RuntimeConfig {
-				return c.WithFeatureMutableGlobal(v)
-			},
-		},
-		{
-			name:          "nontrapping-float-to-int-conversion",
-			feature:       wasm.FeatureNonTrappingFloatToIntConversion,
-			expectDefault: false,
-			setFeature: func(c RuntimeConfig, v bool) RuntimeConfig {
-				return c.WithFeatureNonTrappingFloatToIntConversion(v)
-			},
-		},
-		{
-			name:          "sign-extension-ops",
-			feature:       wasm.FeatureSignExtensionOps,
-			expectDefault: false,
-			setFeature: func(c RuntimeConfig, v bool) RuntimeConfig {
-				return c.WithFeatureSignExtensionOps(v)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		tc := tt
-
-		t.Run(tc.name, func(t *testing.T) {
-			c := NewRuntimeConfig().(*runtimeConfig)
-			require.Equal(t, tc.expectDefault, c.enabledFeatures.Get(tc.feature))
-
-			// Set to false even if it was initially false.
-			c = tc.setFeature(c, false).(*runtimeConfig)
-			require.False(t, c.enabledFeatures.Get(tc.feature))
-
-			// Set true makes it true
-			c = tc.setFeature(c, true).(*runtimeConfig)
-			require.True(t, c.enabledFeatures.Get(tc.feature))
-
-			// Set false makes it false again
-			c = tc.setFeature(c, false).(*runtimeConfig)
-			require.False(t, c.enabledFeatures.Get(tc.feature))
+	t.Run("memoryLimitPages invalid panics", func(t *testing.T) {
+		err := require.CapturePanic(func() {
+			input := &runtimeConfig{}
+			input.WithMemoryLimitPages(wasm.MemoryLimitPages + 1)
 		})
-	}
-}
-
-func TestCompileConfig(t *testing.T) {
-	im := func(externType api.ExternType, oldModule, oldName string) (newModule, newName string) {
-		return "a", oldName
-	}
-	im2 := func(externType api.ExternType, oldModule, oldName string) (newModule, newName string) {
-		return "b", oldName
-	}
-	mp := func(minPages uint32, maxPages *uint32) (min, capacity, max uint32) {
-		return 0, 1, 1
-	}
-	tests := []struct {
-		name     string
-		with     func(CompileConfig) CompileConfig
-		expected *compileConfig
-	}{
-		{
-			name: "WithImportRenamer",
-			with: func(c CompileConfig) CompileConfig {
-				return c.WithImportRenamer(im)
-			},
-			expected: &compileConfig{importRenamer: im},
-		},
-		{
-			name: "WithImportRenamer twice",
-			with: func(c CompileConfig) CompileConfig {
-				return c.WithImportRenamer(im).WithImportRenamer(im2)
-			},
-			expected: &compileConfig{importRenamer: im2},
-		},
-		{
-			name: "WithMemorySizer",
-			with: func(c CompileConfig) CompileConfig {
-				return c.WithMemorySizer(mp)
-			},
-			expected: &compileConfig{memorySizer: mp},
-		},
-		{
-			name: "WithMemorySizer twice",
-			with: func(c CompileConfig) CompileConfig {
-				return c.WithMemorySizer(wasm.MemorySizer).WithMemorySizer(mp)
-			},
-			expected: &compileConfig{memorySizer: mp},
-		},
-	}
-	for _, tt := range tests {
-		tc := tt
-
-		t.Run(tc.name, func(t *testing.T) {
-			input := &compileConfig{}
-			rc := tc.with(input).(*compileConfig)
-
-			// We cannot compare func, but we can compare reflect.Value
-			// See https://go.dev/ref/spec#Comparison_operators
-			require.Equal(t, reflect.ValueOf(tc.expected.importRenamer), reflect.ValueOf(rc.importRenamer))
-			require.Equal(t, reflect.ValueOf(tc.expected.memorySizer), reflect.ValueOf(rc.memorySizer))
-			// The source wasn't modified
-			require.Equal(t, &compileConfig{}, input)
-		})
-	}
+		require.EqualError(t, err, "memoryLimitPages invalid: 65537 > 65536")
+	})
 }
 
 func TestModuleConfig(t *testing.T) {
 	tests := []struct {
-		name     string
-		with     func(ModuleConfig) ModuleConfig
-		expected ModuleConfig
+		name          string
+		with          func(ModuleConfig) ModuleConfig
+		expectNameSet bool
+		expectedName  string
 	}{
+		{
+			name: "WithName default",
+			with: func(c ModuleConfig) ModuleConfig {
+				return c
+			},
+			expectNameSet: false,
+			expectedName:  "",
+		},
 		{
 			name: "WithName",
 			with: func(c ModuleConfig) ModuleConfig {
 				return c.WithName("wazero")
 			},
-			expected: &moduleConfig{
-				name: "wazero",
-			},
+			expectNameSet: true,
+			expectedName:  "wazero",
 		},
 		{
 			name: "WithName empty",
 			with: func(c ModuleConfig) ModuleConfig {
 				return c.WithName("")
 			},
-			expected: &moduleConfig{},
+			expectNameSet: true,
+			expectedName:  "",
 		},
 		{
 			name: "WithName twice",
 			with: func(c ModuleConfig) ModuleConfig {
 				return c.WithName("wazero").WithName("wa0")
 			},
-			expected: &moduleConfig{
-				name: "wa0",
+			expectNameSet: true,
+			expectedName:  "wa0",
+		},
+		{
+			name: "WithName can clear",
+			with: func(c ModuleConfig) ModuleConfig {
+				return c.WithName("wazero").WithName("")
 			},
+			expectNameSet: true,
+			expectedName:  "",
 		},
 	}
 	for _, tt := range tests {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			input := &moduleConfig{}
+			input := NewModuleConfig()
 			rc := tc.with(input)
-			require.Equal(t, tc.expected, rc)
+			require.Equal(t, tc.expectNameSet, rc.(*moduleConfig).nameSet)
+			require.Equal(t, tc.expectedName, rc.(*moduleConfig).name)
 			// The source wasn't modified
-			require.Equal(t, &moduleConfig{}, input)
+			require.Equal(t, NewModuleConfig(), input)
 		})
 	}
 }
 
+// TestModuleConfig_toSysContext only tests the cases that change the inputs to
+// sys.NewContext.
 func TestModuleConfig_toSysContext(t *testing.T) {
-	testFS := fstest.MapFS{}
-	testFS2 := fstest.MapFS{}
+	base := NewModuleConfig()
 
 	tests := []struct {
-		name     string
-		input    ModuleConfig
-		expected *wasm.SysContext
+		name  string
+		input func() (mc ModuleConfig, verify func(t *testing.T, sys *internalsys.Context))
 	}{
 		{
-			name:  "empty",
-			input: NewModuleConfig(),
-			expected: requireSysContext(t,
-				math.MaxUint32, // max
-				nil,            // args
-				nil,            // environ
-				nil,            // stdin
-				nil,            // stdout
-				nil,            // stderr
-				nil,            // randSource
-				nil,            // openedFiles
-			),
+			name: "empty",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				return base, func(t *testing.T, sys *internalsys.Context) { require.NotNil(t, sys) }
+			},
 		},
 		{
-			name:  "WithArgs",
-			input: NewModuleConfig().WithArgs("a", "bc"),
-			expected: requireSysContext(t,
-				math.MaxUint32,      // max
-				[]string{"a", "bc"}, // args
-				nil,                 // environ
-				nil,                 // stdin
-				nil,                 // stdout
-				nil,                 // stderr
-				nil,                 // randSource
-				nil,                 // openedFiles
-			),
+			name: "WithNanotime",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithNanotime(func() int64 { return 1234567 }, 54321)
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					require.Equal(t, 1234567, int(sys.Nanotime()))
+					require.Equal(t, 54321, int(sys.NanotimeResolution()))
+				}
+			},
 		},
 		{
-			name:  "WithArgs empty ok", // Particularly argv[0] can be empty, and we have no rules about others.
-			input: NewModuleConfig().WithArgs("", "bc"),
-			expected: requireSysContext(t,
-				math.MaxUint32,     // max
-				[]string{"", "bc"}, // args
-				nil,                // environ
-				nil,                // stdin
-				nil,                // stdout
-				nil,                // stderr
-				nil,                // randSource
-				nil,                // openedFiles
-			),
+			name: "WithSysNanotime",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithSysNanotime()
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					require.Equal(t, int(1), int(sys.NanotimeResolution()))
+				}
+			},
 		},
 		{
-			name:  "WithArgs second call overwrites",
-			input: NewModuleConfig().WithArgs("a", "bc").WithArgs("bc", "a"),
-			expected: requireSysContext(t,
-				math.MaxUint32,      // max
-				[]string{"bc", "a"}, // args
-				nil,                 // environ
-				nil,                 // stdin
-				nil,                 // stdout
-				nil,                 // stderr
-				nil,                 // randSource
-				nil,                 // openedFiles
-			),
+			name: "WithWalltime",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithWalltime(func() (sec int64, nsec int32) { return 5, 10 }, 54321)
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					actualSec, actualNano := sys.Walltime()
+					require.Equal(t, 5, int(actualSec))
+					require.Equal(t, 10, int(actualNano))
+					require.Equal(t, 54321, int(sys.WalltimeResolution()))
+				}
+			},
 		},
 		{
-			name:  "WithEnv",
-			input: NewModuleConfig().WithEnv("a", "b"),
-			expected: requireSysContext(t,
-				math.MaxUint32,  // max
-				nil,             // args
-				[]string{"a=b"}, // environ
-				nil,             // stdin
-				nil,             // stdout
-				nil,             // stderr
-				nil,             // randSource
-				nil,             // openedFiles
-			),
+			name: "WithSysWalltime",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithSysWalltime()
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					require.Equal(t, int(time.Microsecond.Nanoseconds()), int(sys.WalltimeResolution()))
+				}
+			},
 		},
 		{
-			name:  "WithEnv empty value",
-			input: NewModuleConfig().WithEnv("a", ""),
-			expected: requireSysContext(t,
-				math.MaxUint32, // max
-				nil,            // args
-				[]string{"a="}, // environ
-				nil,            // stdin
-				nil,            // stdout
-				nil,            // stderr
-				nil,            // randSource
-				nil,            // openedFiles
-			),
+			name: "WithArgs empty",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithArgs()
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					args := sys.Args()
+					require.Equal(t, 0, len(args))
+				}
+			},
 		},
 		{
-			name:  "WithEnv twice",
-			input: NewModuleConfig().WithEnv("a", "b").WithEnv("c", "de"),
-			expected: requireSysContext(t,
-				math.MaxUint32,          // max
-				nil,                     // args
-				[]string{"a=b", "c=de"}, // environ
-				nil,                     // stdin
-				nil,                     // stdout
-				nil,                     // stderr
-				nil,                     // randSource
-				nil,                     // openedFiles
-			),
+			name: "WithArgs",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithArgs("a", "bc")
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					args := sys.Args()
+					require.Equal(t, 2, len(args))
+					require.Equal(t, "a", string(args[0]))
+					require.Equal(t, "bc", string(args[1]))
+				}
+			},
 		},
 		{
-			name:  "WithEnv overwrites",
-			input: NewModuleConfig().WithEnv("a", "bc").WithEnv("c", "de").WithEnv("a", "de"),
-			expected: requireSysContext(t,
-				math.MaxUint32,           // max
-				nil,                      // args
-				[]string{"a=de", "c=de"}, // environ
-				nil,                      // stdin
-				nil,                      // stdout
-				nil,                      // stderr
-				nil,                      // randSource
-				nil,                      // openedFiles
-			),
-		},
-
-		{
-			name:  "WithEnv twice",
-			input: NewModuleConfig().WithEnv("a", "b").WithEnv("c", "de"),
-			expected: requireSysContext(t,
-				math.MaxUint32,          // max
-				nil,                     // args
-				[]string{"a=b", "c=de"}, // environ
-				nil,                     // stdin
-				nil,                     // stdout
-				nil,                     // stderr
-				nil,                     // randSource
-				nil,                     // openedFiles
-			),
+			name: "WithArgs empty ok", // Particularly argv[0] can be empty, and we have no rules about others.
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithArgs("", "bc")
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					args := sys.Args()
+					require.Equal(t, 2, len(args))
+					require.Equal(t, "", string(args[0]))
+					require.Equal(t, "bc", string(args[1]))
+				}
+			},
 		},
 		{
-			name:  "WithFS",
-			input: NewModuleConfig().WithFS(testFS),
-			expected: requireSysContext(t,
-				math.MaxUint32, // max
-				nil,            // args
-				nil,            // environ
-				nil,            // stdin
-				nil,            // stdout
-				nil,            // stderr
-				nil,            // randSource
-				map[uint32]*sys.FileEntry{ // openedFiles
-					3: {Path: "/", FS: testFS},
-					4: {Path: ".", FS: testFS},
-				},
-			),
+			name: "WithArgs second call overwrites",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithArgs("a", "bc").WithArgs("bc", "a")
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					args := sys.Args()
+					require.Equal(t, 2, len(args))
+					require.Equal(t, "bc", string(args[0]))
+					require.Equal(t, "a", string(args[1]))
+				}
+			},
 		},
 		{
-			name:  "WithFS overwrites",
-			input: NewModuleConfig().WithFS(testFS).WithFS(testFS2),
-			expected: requireSysContext(t,
-				math.MaxUint32, // max
-				nil,            // args
-				nil,            // environ
-				nil,            // stdin
-				nil,            // stdout
-				nil,            // stderr
-				nil,            // randSource
-				map[uint32]*sys.FileEntry{ // openedFiles
-					3: {Path: "/", FS: testFS2},
-					4: {Path: ".", FS: testFS2},
-				},
-			),
+			name: "WithEnv",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithEnv("a", "b")
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					envs := sys.Environ()
+					require.Equal(t, 1, len(envs))
+					require.Equal(t, "a=b", string(envs[0]))
+				}
+			},
 		},
 		{
-			name:  "WithWorkDirFS",
-			input: NewModuleConfig().WithWorkDirFS(testFS),
-			expected: requireSysContext(t,
-				math.MaxUint32, // max
-				nil,            // args
-				nil,            // environ
-				nil,            // stdin
-				nil,            // stdout
-				nil,            // stderr
-				nil,            // randSource
-				map[uint32]*sys.FileEntry{ // openedFiles
-					3: {Path: ".", FS: testFS},
-				},
-			),
+			name: "WithEnv empty value",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithEnv("a", "")
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					envs := sys.Environ()
+					require.Equal(t, 1, len(envs))
+					require.Equal(t, "a=", string(envs[0]))
+				}
+			},
 		},
 		{
-			name:  "WithFS and WithWorkDirFS",
-			input: NewModuleConfig().WithFS(testFS).WithWorkDirFS(testFS2),
-			expected: requireSysContext(t,
-				math.MaxUint32, // max
-				nil,            // args
-				nil,            // environ
-				nil,            // stdin
-				nil,            // stdout
-				nil,            // stderr
-				nil,            // randSource
-				map[uint32]*sys.FileEntry{ // openedFiles
-					3: {Path: "/", FS: testFS},
-					4: {Path: ".", FS: testFS2},
-				},
-			),
+			name: "WithEnv twice",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithEnv("a", "b").WithEnv("c", "de")
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					envs := sys.Environ()
+					require.Equal(t, 2, len(envs))
+					require.Equal(t, "a=b", string(envs[0]))
+					require.Equal(t, "c=de", string(envs[1]))
+				}
+			},
 		},
 		{
-			name:  "WithWorkDirFS and WithFS",
-			input: NewModuleConfig().WithWorkDirFS(testFS).WithFS(testFS2),
-			expected: requireSysContext(t,
-				math.MaxUint32, // max
-				nil,            // args
-				nil,            // environ
-				nil,            // stdin
-				nil,            // stdout
-				nil,            // stderr
-				nil,            // randSource
-				map[uint32]*sys.FileEntry{ // openedFiles
-					3: {Path: ".", FS: testFS},
-					4: {Path: "/", FS: testFS2},
-				},
-			),
+			name: "WithEnv overwrites",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithEnv("a", "bc").WithEnv("c", "de").WithEnv("a", "ff")
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					envs := sys.Environ()
+					require.Equal(t, 2, len(envs))
+					require.Equal(t, "a=ff", string(envs[0]))
+					require.Equal(t, "c=de", string(envs[1]))
+				}
+			},
+		},
+		{
+			name: "WithEnv twice",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithEnv("a", "b").WithEnv("c", "de")
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					envs := sys.Environ()
+					require.Equal(t, 2, len(envs))
+					require.Equal(t, "a=b", string(envs[0]))
+					require.Equal(t, "c=de", string(envs[1]))
+				}
+			},
+		},
+		{
+			name: "WithRandSource",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				r := bytes.NewReader([]byte{1, 2, 3, 4})
+				config := base.WithRandSource(r)
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					actual := sys.RandSource()
+					require.Equal(t, r, actual)
+				}
+			},
+		},
+		{
+			name: "WithRandSource nil",
+			input: func() (ModuleConfig, func(t *testing.T, sys *internalsys.Context)) {
+				config := base.WithRandSource(nil)
+				return config, func(t *testing.T, sys *internalsys.Context) {
+					actual := sys.RandSource()
+					require.Equal(t, platform.NewFakeRandSource(), actual)
+				}
+			},
 		},
 	}
+
 	for _, tt := range tests {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			sys, err := tc.input.(*moduleConfig).toSysContext()
+			config, verify := tc.input()
+			actual, err := config.(*moduleConfig).toSysContext()
 			require.NoError(t, err)
-			require.Equal(t, tc.expected, sys)
+			verify(t, actual)
 		})
 	}
+}
+
+// TestModuleConfig_toSysContext_WithWalltime has to test differently because we can't
+// compare function pointers when functions are passed by value.
+func TestModuleConfig_toSysContext_WithWalltime(t *testing.T) {
+	tests := []struct {
+		name               string
+		input              ModuleConfig
+		expectedSec        int64
+		expectedNsec       int32
+		expectedResolution sys.ClockResolution
+		expectedErr        string
+	}{
+		{
+			name: "ok",
+			input: NewModuleConfig().
+				WithWalltime(func() (sec int64, nsec int32) {
+					return 1, 2
+				}, 3),
+			expectedSec:        1,
+			expectedNsec:       2,
+			expectedResolution: 3,
+		},
+		{
+			name: "overwrites",
+			input: NewModuleConfig().
+				WithWalltime(func() (sec int64, nsec int32) {
+					return 3, 4
+				}, 5).
+				WithWalltime(func() (sec int64, nsec int32) {
+					return 1, 2
+				}, 3),
+			expectedSec:        1,
+			expectedNsec:       2,
+			expectedResolution: 3,
+		},
+		{
+			name: "invalid resolution",
+			input: NewModuleConfig().
+				WithWalltime(func() (sec int64, nsec int32) {
+					return 1, 2
+				}, 0),
+			expectedErr: "invalid Walltime resolution: 0",
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+
+		t.Run(tc.name, func(t *testing.T) {
+			sysCtx, err := tc.input.(*moduleConfig).toSysContext()
+			if tc.expectedErr == "" {
+				require.Nil(t, err)
+				sec, nsec := sysCtx.Walltime()
+				require.Equal(t, tc.expectedSec, sec)
+				require.Equal(t, tc.expectedNsec, nsec)
+				require.Equal(t, tc.expectedResolution, sysCtx.WalltimeResolution())
+			} else {
+				require.EqualError(t, err, tc.expectedErr)
+			}
+		})
+	}
+
+	t.Run("context", func(t *testing.T) {
+		sysCtx, err := NewModuleConfig().
+			WithWalltime(func() (sec int64, nsec int32) {
+				return 1, 2
+			}, 3).(*moduleConfig).toSysContext()
+		require.NoError(t, err)
+		sec, nsec := sysCtx.Walltime()
+		// If below pass, the context was correct!
+		require.Equal(t, int64(1), sec)
+		require.Equal(t, int32(2), nsec)
+	})
+}
+
+// TestModuleConfig_toSysContext_WithNanotime has to test differently because we can't
+// compare function pointers when functions are passed by value.
+func TestModuleConfig_toSysContext_WithNanotime(t *testing.T) {
+	tests := []struct {
+		name               string
+		input              ModuleConfig
+		expectedNanos      int64
+		expectedResolution sys.ClockResolution
+		expectedErr        string
+	}{
+		{
+			name: "ok",
+			input: NewModuleConfig().
+				WithNanotime(func() int64 {
+					return 1
+				}, 2),
+			expectedNanos:      1,
+			expectedResolution: 2,
+		},
+		{
+			name: "overwrites",
+			input: NewModuleConfig().
+				WithNanotime(func() int64 {
+					return 3
+				}, 4).
+				WithNanotime(func() int64 {
+					return 1
+				}, 2),
+			expectedNanos:      1,
+			expectedResolution: 2,
+		},
+		{
+			name: "invalid resolution",
+			input: NewModuleConfig().
+				WithNanotime(func() int64 {
+					return 1
+				}, 0),
+			expectedErr: "invalid Nanotime resolution: 0",
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+
+		t.Run(tc.name, func(t *testing.T) {
+			sysCtx, err := tc.input.(*moduleConfig).toSysContext()
+			if tc.expectedErr == "" {
+				require.Nil(t, err)
+				nanos := sysCtx.Nanotime()
+				require.Equal(t, tc.expectedNanos, nanos)
+				require.Equal(t, tc.expectedResolution, sysCtx.NanotimeResolution())
+			} else {
+				require.EqualError(t, err, tc.expectedErr)
+			}
+		})
+	}
+}
+
+// TestModuleConfig_toSysContext_WithNanosleep has to test differently because
+// we can't compare function pointers when functions are passed by value.
+func TestModuleConfig_toSysContext_WithNanosleep(t *testing.T) {
+	sysCtx, err := NewModuleConfig().
+		WithNanosleep(func(ns int64) {
+			require.Equal(t, int64(2), ns)
+		}).(*moduleConfig).toSysContext()
+	require.NoError(t, err)
+	sysCtx.Nanosleep(2)
+}
+
+// TestModuleConfig_toSysContext_WithOsyield has to test differently because
+// we can't compare function pointers when functions are passed by value.
+func TestModuleConfig_toSysContext_WithOsyield(t *testing.T) {
+	var yielded bool
+	sysCtx, err := NewModuleConfig().
+		WithOsyield(func() {
+			yielded = true
+		}).(*moduleConfig).toSysContext()
+	require.NoError(t, err)
+	sysCtx.Osyield()
+	require.True(t, yielded)
 }
 
 func TestModuleConfig_toSysContext_Errors(t *testing.T) {
@@ -555,16 +538,6 @@ func TestModuleConfig_toSysContext_Errors(t *testing.T) {
 			input:       NewModuleConfig().WithEnv("", "a"),
 			expectedErr: "environ invalid: empty key",
 		},
-		{
-			name:        "WithFS nil",
-			input:       NewModuleConfig().WithFS(nil),
-			expectedErr: "FS for / is nil",
-		},
-		{
-			name:        "WithWorkDirFS nil",
-			input:       NewModuleConfig().WithWorkDirFS(nil),
-			expectedErr: "FS for . is nil",
-		},
 	}
 	for _, tt := range tests {
 		tc := tt
@@ -576,23 +549,107 @@ func TestModuleConfig_toSysContext_Errors(t *testing.T) {
 	}
 }
 
-// requireSysContext ensures wasm.NewSysContext doesn't return an error, which makes it usable in test matrices.
-func requireSysContext(t *testing.T, max uint32, args, environ []string, stdin io.Reader, stdout, stderr io.Writer, randsource io.Reader, openedFiles map[uint32]*sys.FileEntry) *wasm.SysContext {
-	sys, err := wasm.NewSysContext(max, args, environ, stdin, stdout, stderr, randsource, openedFiles)
-	require.NoError(t, err)
-	return sys
+func TestModuleConfig_clone(t *testing.T) {
+	mc := NewModuleConfig().(*moduleConfig)
+	cloned := mc.clone()
+
+	// Make post-clone changes
+	mc.fsConfig = NewFSConfig().WithFSMount(fstest.FS, "/")
+	mc.environKeys["2"] = 2
+
+	cloned.environKeys["1"] = 1
+
+	// Ensure the maps are not shared
+	require.Equal(t, map[string]int{"2": 2}, mc.environKeys)
+	require.Equal(t, map[string]int{"1": 1}, cloned.environKeys)
+
+	// Ensure the fs is not shared
+	require.Nil(t, cloned.fsConfig)
 }
 
-func TestCompiledCode_Close(t *testing.T) {
+func Test_compiledModule_Name(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    *compiledModule
+		expected string
+	}{
+		{
+			name:  "no name section",
+			input: &compiledModule{module: &wasm.Module{}},
+		},
+		{
+			name:  "empty name",
+			input: &compiledModule{module: &wasm.Module{NameSection: &wasm.NameSection{}}},
+		},
+		{
+			name:     "name",
+			input:    &compiledModule{module: &wasm.Module{NameSection: &wasm.NameSection{ModuleName: "foo"}}},
+			expected: "foo",
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expected, tc.input.Name())
+		})
+	}
+}
+
+func Test_compiledModule_CustomSections(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    *compiledModule
+		expected []string
+	}{
+		{
+			name:     "no custom section",
+			input:    &compiledModule{module: &wasm.Module{}},
+			expected: []string{},
+		},
+		{
+			name: "name",
+			input: &compiledModule{module: &wasm.Module{
+				CustomSections: []*wasm.CustomSection{
+					{Name: "custom1"},
+					{Name: "custom2"},
+					{Name: "customDup"},
+					{Name: "customDup"},
+				},
+			}},
+			expected: []string{
+				"custom1",
+				"custom2",
+				"customDup",
+				"customDup",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tc := tt
+
+		t.Run(tc.name, func(t *testing.T) {
+			customSections := tc.input.CustomSections()
+			require.Equal(t, len(tc.expected), len(customSections))
+			for i := 0; i < len(tc.expected); i++ {
+				require.Equal(t, tc.expected[i], customSections[i].Name())
+			}
+		})
+	}
+}
+
+func Test_compiledModule_Close(t *testing.T) {
 	for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
 		e := &mockEngine{name: "1", cachedModules: map[*wasm.Module]struct{}{}}
 
-		var cs []*compiledCode
+		var cs []*compiledModule
 		for i := 0; i < 10; i++ {
 			m := &wasm.Module{}
-			err := e.CompileModule(ctx, m)
+			err := e.CompileModule(ctx, m, nil, false)
 			require.NoError(t, err)
-			cs = append(cs, &compiledCode{module: m, compiledEngine: e})
+			cs = append(cs, &compiledModule{module: m, compiledEngine: e})
 		}
 
 		// Before Close.
@@ -604,5 +661,18 @@ func TestCompiledCode_Close(t *testing.T) {
 
 		// After Close.
 		require.Zero(t, len(e.cachedModules))
+	}
+}
+
+func TestNewRuntimeConfig(t *testing.T) {
+	c, ok := NewRuntimeConfig().(*runtimeConfig)
+	require.True(t, ok)
+	// Should be cloned from the source.
+	require.NotEqual(t, engineLessConfig, c)
+	// Ensures if the correct engine is selected.
+	if platform.CompilerSupported() {
+		require.Equal(t, engineKindCompiler, c.engineKind)
+	} else {
+		require.Equal(t, engineKindInterpreter, c.engineKind)
 	}
 }

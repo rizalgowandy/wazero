@@ -24,18 +24,17 @@ const (
 	OpcodeEnd Opcode = 0x0b
 
 	// OpcodeBr is a stack-polymorphic opcode that performs an unconditional branch. How the stack is modified depends
-	// on whether the "br" is enclosed by a loop, and if FeatureMultiValue is enabled.
+	// on whether the "br" is enclosed by a loop, and if CoreFeatureMultiValue is enabled.
 	//
 	// Here are the rules in pseudocode about how the stack is modified based on the "br" operand L (label):
 	//	if L is loop: append(L.originalStackWithoutInputs, N-values popped from the stack) where N == L.inputs
 	//	else: append(L.originalStackWithoutInputs, N-values popped from the stack) where N == L.results
 	//
-	// In WebAssembly 1.0 (20191205), N can be zero or one. When FeatureMultiValue is enabled, N can be more than one,
+	// In WebAssembly 1.0 (20191205), N can be zero or one. When CoreFeatureMultiValue is enabled, N can be more than one,
 	// depending on the type use of the label L.
 	//
 	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#-hrefsyntax-instr-controlmathsfbrl
 	OpcodeBr Opcode = 0x0c
-	// ^^ TODO: Add a diagram to help explain br l means that branch into AFTER l for non-loop labels
 
 	OpcodeBrIf         Opcode = 0x0d
 	OpcodeBrTable      Opcode = 0x0e
@@ -57,7 +56,7 @@ const (
 	OpcodeGlobalGet Opcode = 0x23
 	OpcodeGlobalSet Opcode = 0x24
 
-	// Below are toggled with FeatureReferenceTypes
+	// Below are toggled with CoreFeatureReferenceTypes
 
 	OpcodeTableGet Opcode = 0x25
 	OpcodeTableSet Opcode = 0x26
@@ -218,7 +217,7 @@ const (
 	OpcodeI64TruncF64S  Opcode = 0xb0
 	OpcodeI64TruncF64U  Opcode = 0xb1
 
-	OpcodeF32ConvertI32s Opcode = 0xb2
+	OpcodeF32ConvertI32S Opcode = 0xb2
 	OpcodeF32ConvertI32U Opcode = 0xb3
 	OpcodeF32ConvertI64S Opcode = 0xb4
 	OpcodeF32ConvertI64U Opcode = 0xb5
@@ -236,51 +235,55 @@ const (
 	OpcodeF64ReinterpretI64 Opcode = 0xbf
 
 	// OpcodeRefNull pushes a null reference value whose type is specified by immediate to this opcode.
-	// This is defined in the reference-types proposal, but necessary for FeatureBulkMemoryOperations as well.
+	// This is defined in the reference-types proposal, but necessary for CoreFeatureBulkMemoryOperations as well.
 	//
 	// Currently only supported in the constant expression in element segments.
 	OpcodeRefNull = 0xd0
 	// OpcodeRefIsNull pops a reference value, and pushes 1 if it is null, 0 otherwise.
-	// This is defined in the reference-types proposal, but necessary for FeatureBulkMemoryOperations as well.
+	// This is defined in the reference-types proposal, but necessary for CoreFeatureBulkMemoryOperations as well.
 	//
 	// Currently not supported.
 	OpcodeRefIsNull = 0xd1
 	// OpcodeRefFunc pushes a funcref value whose index equals the immediate to this opcode.
-	// This is defined in the reference-types proposal, but necessary for FeatureBulkMemoryOperations as well.
+	// This is defined in the reference-types proposal, but necessary for CoreFeatureBulkMemoryOperations as well.
 	//
-	// Currently only supported in the constant expression in element segments.
+	// Currently, this is only supported in the constant expression in element segments.
 	OpcodeRefFunc = 0xd2
 
-	// Below are toggled with FeatureSignExtensionOps
+	// Below are toggled with CoreFeatureSignExtensionOps
 
 	// OpcodeI32Extend8S extends a signed 8-bit integer to a 32-bit integer.
-	// Note: This is dependent on the flag FeatureSignExtensionOps
+	// Note: This is dependent on the flag CoreFeatureSignExtensionOps
 	OpcodeI32Extend8S Opcode = 0xc0
 
 	// OpcodeI32Extend16S extends a signed 16-bit integer to a 32-bit integer.
-	// Note: This is dependent on the flag FeatureSignExtensionOps
+	// Note: This is dependent on the flag CoreFeatureSignExtensionOps
 	OpcodeI32Extend16S Opcode = 0xc1
 
 	// OpcodeI64Extend8S extends a signed 8-bit integer to a 64-bit integer.
-	// Note: This is dependent on the flag FeatureSignExtensionOps
+	// Note: This is dependent on the flag CoreFeatureSignExtensionOps
 	OpcodeI64Extend8S Opcode = 0xc2
 
 	// OpcodeI64Extend16S extends a signed 16-bit integer to a 64-bit integer.
-	// Note: This is dependent on the flag FeatureSignExtensionOps
+	// Note: This is dependent on the flag CoreFeatureSignExtensionOps
 	OpcodeI64Extend16S Opcode = 0xc3
 
 	// OpcodeI64Extend32S extends a signed 32-bit integer to a 64-bit integer.
-	// Note: This is dependent on the flag FeatureSignExtensionOps
+	// Note: This is dependent on the flag CoreFeatureSignExtensionOps
 	OpcodeI64Extend32S Opcode = 0xc4
 
 	// OpcodeMiscPrefix is the prefix of various multi-byte opcodes.
-	// Introduced in FeatureNonTrappingFloatToIntConversion, but used in other
-	// features, such as FeatureBulkMemoryOperations.
+	// Introduced in CoreFeatureNonTrappingFloatToIntConversion, but used in other
+	// features, such as CoreFeatureBulkMemoryOperations.
 	OpcodeMiscPrefix Opcode = 0xfc
 
 	// OpcodeVecPrefix is the prefix of all vector isntructions introduced in
-	// FeatureSIMD.
+	// CoreFeatureSIMD.
 	OpcodeVecPrefix Opcode = 0xfd
+
+	// OpcodeAtomicPrefix is the prefix of all atomic instructions introduced in
+	// CoreFeatureThreads.
+	OpcodeAtomicPrefix Opcode = 0xfe
 )
 
 // OpcodeMisc represents opcodes of the miscellaneous operations.
@@ -288,7 +291,7 @@ const (
 type OpcodeMisc = byte
 
 const (
-	// Below are toggled with FeatureNonTrappingFloatToIntConversion.
+	// Below are toggled with CoreFeatureNonTrappingFloatToIntConversion.
 	// https://github.com/WebAssembly/spec/blob/ce4b6c4d47eb06098cc7ab2e81f24748da822f20/proposals/nontrapping-float-to-int-conversion/Overview.md
 
 	OpcodeMiscI32TruncSatF32S OpcodeMisc = 0x00
@@ -300,7 +303,7 @@ const (
 	OpcodeMiscI64TruncSatF64S OpcodeMisc = 0x06
 	OpcodeMiscI64TruncSatF64U OpcodeMisc = 0x07
 
-	// Below are toggled with FeatureBulkMemoryOperations.
+	// Below are toggled with CoreFeatureBulkMemoryOperations.
 	// Opcodes are those new in document/core/appendix/index-instructions.rst (the commit that merged the feature).
 	// See https://github.com/WebAssembly/spec/commit/7fa2f20a6df4cf1c114582c8cb60f5bfcdbf1be1
 	// See https://www.w3.org/TR/2022/WD-wasm-core-2-20220419/appendix/changes.html#bulk-memory-and-table-instructions
@@ -313,7 +316,7 @@ const (
 	OpcodeMiscElemDrop   OpcodeMisc = 0x0d
 	OpcodeMiscTableCopy  OpcodeMisc = 0x0e
 
-	// Below are toggled with FeatureReferenceTypes
+	// Below are toggled with CoreFeatureReferenceTypes
 
 	OpcodeMiscTableGrow OpcodeMisc = 0x0f
 	OpcodeMiscTableSize OpcodeMisc = 0x10
@@ -323,19 +326,19 @@ const (
 // OpcodeVec represents an opcode of a vector instructions which has
 // multi-byte encoding and is prefixed by OpcodeMiscPrefix.
 //
-// These opcodes are toggled with FeatureSIMD.
+// These opcodes are toggled with CoreFeatureSIMD.
 type OpcodeVec = byte
 
 const (
 	// Loads and stores.
 
 	OpcodeVecV128Load        OpcodeVec = 0x00
-	OpcodeVecV128Load8x8_s   OpcodeVec = 0x01
-	OpcodeVecV128Load8x8_u   OpcodeVec = 0x02
-	OpcodeVecV128Load16x4_s  OpcodeVec = 0x03
-	OpcodeVecV128Load16x4_u  OpcodeVec = 0x04
-	OpcodeVecV128Load32x2_s  OpcodeVec = 0x05
-	OpcodeVecV128Load32x2_u  OpcodeVec = 0x06
+	OpcodeVecV128Load8x8s    OpcodeVec = 0x01
+	OpcodeVecV128Load8x8u    OpcodeVec = 0x02
+	OpcodeVecV128Load16x4s   OpcodeVec = 0x03
+	OpcodeVecV128Load16x4u   OpcodeVec = 0x04
+	OpcodeVecV128Load32x2s   OpcodeVec = 0x05
+	OpcodeVecV128Load32x2u   OpcodeVec = 0x06
 	OpcodeVecV128Load8Splat  OpcodeVec = 0x07
 	OpcodeVecV128Load16Splat OpcodeVec = 0x08
 	OpcodeVecV128Load32Splat OpcodeVec = 0x09
@@ -487,7 +490,7 @@ const (
 	OpcodeVecI8x16MinU    OpcodeVec = 0x77
 	OpcodeVecI8x16MaxS    OpcodeVec = 0x78
 	OpcodeVecI8x16MaxU    OpcodeVec = 0x79
-	OpcodeVecI8x16ArgrU   OpcodeVec = 0x7b
+	OpcodeVecI8x16AvgrU   OpcodeVec = 0x7b
 
 	// i16 misc.
 
@@ -495,7 +498,7 @@ const (
 	OpcodeVecI16x8ExtaddPairwiseI8x16U OpcodeVec = 0x7d
 	OpcodeVecI16x8Abs                  OpcodeVec = 0x80
 	OpcodeVecI16x8Neg                  OpcodeVec = 0x81
-	OpcodeVecI16x8Q16mulrSatS          OpcodeVec = 0x82
+	OpcodeVecI16x8Q15mulrSatS          OpcodeVec = 0x82
 	OpcodeVecI16x8AllTrue              OpcodeVec = 0x83
 	OpcodeVecI16x8BitMask              OpcodeVec = 0x84
 	OpcodeVecI16x8NarrowI32x4S         OpcodeVec = 0x85
@@ -518,7 +521,7 @@ const (
 	OpcodeVecI16x8MinU                 OpcodeVec = 0x97
 	OpcodeVecI16x8MaxS                 OpcodeVec = 0x98
 	OpcodeVecI16x8MaxU                 OpcodeVec = 0x99
-	OpcodeVecI16x8ArgrU                OpcodeVec = 0x9b
+	OpcodeVecI16x8AvgrU                OpcodeVec = 0x9b
 	OpcodeVecI16x8ExtMulLowI8x16S      OpcodeVec = 0x9c
 	OpcodeVecI16x8ExtMulHighI8x16S     OpcodeVec = 0x9d
 	OpcodeVecI16x8ExtMulLowI8x16U      OpcodeVec = 0x9e
@@ -593,21 +596,21 @@ const (
 
 	// f64 misc.
 
-	OpcodeVecF64x4Ceil    OpcodeVec = 0x74
-	OpcodeVecF64x4Floor   OpcodeVec = 0x75
-	OpcodeVecF64x4Trunc   OpcodeVec = 0x7a
-	OpcodeVecF64x4Nearest OpcodeVec = 0x94
-	OpcodeVecF64x4Abs     OpcodeVec = 0xec
-	OpcodeVecF64x4Neg     OpcodeVec = 0xed
-	OpcodeVecF64x4Sqrt    OpcodeVec = 0xef
-	OpcodeVecF64x4Add     OpcodeVec = 0xf0
-	OpcodeVecF64x4Sub     OpcodeVec = 0xf1
-	OpcodeVecF64x4Mul     OpcodeVec = 0xf2
-	OpcodeVecF64x4Div     OpcodeVec = 0xf3
-	OpcodeVecF64x4Min     OpcodeVec = 0xf4
-	OpcodeVecF64x4Max     OpcodeVec = 0xf5
-	OpcodeVecF64x4Pmin    OpcodeVec = 0xf6
-	OpcodeVecF64x4Pmax    OpcodeVec = 0xf7
+	OpcodeVecF64x2Ceil    OpcodeVec = 0x74
+	OpcodeVecF64x2Floor   OpcodeVec = 0x75
+	OpcodeVecF64x2Trunc   OpcodeVec = 0x7a
+	OpcodeVecF64x2Nearest OpcodeVec = 0x94
+	OpcodeVecF64x2Abs     OpcodeVec = 0xec
+	OpcodeVecF64x2Neg     OpcodeVec = 0xed
+	OpcodeVecF64x2Sqrt    OpcodeVec = 0xef
+	OpcodeVecF64x2Add     OpcodeVec = 0xf0
+	OpcodeVecF64x2Sub     OpcodeVec = 0xf1
+	OpcodeVecF64x2Mul     OpcodeVec = 0xf2
+	OpcodeVecF64x2Div     OpcodeVec = 0xf3
+	OpcodeVecF64x2Min     OpcodeVec = 0xf4
+	OpcodeVecF64x2Max     OpcodeVec = 0xf5
+	OpcodeVecF64x2Pmin    OpcodeVec = 0xf6
+	OpcodeVecF64x2Pmax    OpcodeVec = 0xf7
 
 	// conversions.
 
@@ -617,10 +620,161 @@ const (
 	OpcodeVecF32x4ConvertI32x4U       OpcodeVec = 0xfb
 	OpcodeVecI32x4TruncSatF64x2SZero  OpcodeVec = 0xfc
 	OpcodeVecI32x4TruncSatF64x2UZero  OpcodeVec = 0xfd
-	OpcodeVecF64x2ConvertI32x4S       OpcodeVec = 0xfe
-	OpcodeVecF64x2ConvertI32x4U       OpcodeVec = 0xff
+	OpcodeVecF64x2ConvertLowI32x4S    OpcodeVec = 0xfe
+	OpcodeVecF64x2ConvertLowI32x4U    OpcodeVec = 0xff
 	OpcodeVecF32x4DemoteF64x2Zero     OpcodeVec = 0x5e
 	OpcodeVecF64x2PromoteLowF32x4Zero OpcodeVec = 0x5f
+)
+
+// OpcodeAtomic represents an opcode of atomic instructions which has
+// multi-byte encoding and is prefixed by OpcodeAtomicPrefix.
+//
+// These opcodes are toggled with CoreFeaturesThreads.
+type OpcodeAtomic = byte
+
+const (
+	// OpcodeAtomicMemoryNotify represents the instruction memory.atomic.notify.
+	OpcodeAtomicMemoryNotify OpcodeAtomic = 0x00
+	// OpcodeAtomicMemoryWait32 represents the instruction memory.atomic.wait32.
+	OpcodeAtomicMemoryWait32 OpcodeAtomic = 0x01
+	// OpcodeAtomicMemoryWait64 represents the instruction memory.atomic.wait64.
+	OpcodeAtomicMemoryWait64 OpcodeAtomic = 0x02
+	// OpcodeAtomicFence represents the instruction atomic.fence.
+	OpcodeAtomicFence OpcodeAtomic = 0x03
+
+	// OpcodeAtomicI32Load represents the instruction i32.atomic.load.
+	OpcodeAtomicI32Load OpcodeAtomic = 0x10
+	// OpcodeAtomicI64Load represents the instruction i64.atomic.load.
+	OpcodeAtomicI64Load OpcodeAtomic = 0x11
+	// OpcodeAtomicI32Load8U represents the instruction i32.atomic.load8_u.
+	OpcodeAtomicI32Load8U OpcodeAtomic = 0x12
+	// OpcodeAtomicI32Load16U represents the instruction i32.atomic.load16_u.
+	OpcodeAtomicI32Load16U OpcodeAtomic = 0x13
+	// OpcodeAtomicI64Load8U represents the instruction i64.atomic.load8_u.
+	OpcodeAtomicI64Load8U OpcodeAtomic = 0x14
+	// OpcodeAtomicI64Load16U represents the instruction i64.atomic.load16_u.
+	OpcodeAtomicI64Load16U OpcodeAtomic = 0x15
+	// OpcodeAtomicI64Load32U represents the instruction i64.atomic.load32_u.
+	OpcodeAtomicI64Load32U OpcodeAtomic = 0x16
+	// OpcodeAtomicI32Store represents the instruction i32.atomic.store.
+	OpcodeAtomicI32Store OpcodeAtomic = 0x17
+	// OpcodeAtomicI64Store represents the instruction i64.atomic.store.
+	OpcodeAtomicI64Store OpcodeAtomic = 0x18
+	// OpcodeAtomicI32Store8 represents the instruction i32.atomic.store8.
+	OpcodeAtomicI32Store8 OpcodeAtomic = 0x19
+	// OpcodeAtomicI32Store16 represents the instruction i32.atomic.store16.
+	OpcodeAtomicI32Store16 OpcodeAtomic = 0x1a
+	// OpcodeAtomicI64Store8 represents the instruction i64.atomic.store8.
+	OpcodeAtomicI64Store8 OpcodeAtomic = 0x1b
+	// OpcodeAtomicI64Store16 represents the instruction i64.atomic.store16.
+	OpcodeAtomicI64Store16 OpcodeAtomic = 0x1c
+	// OpcodeAtomicI64Store32 represents the instruction i64.atomic.store32.
+	OpcodeAtomicI64Store32 OpcodeAtomic = 0x1d
+
+	// OpcodeAtomicI32RmwAdd represents the instruction i32.atomic.rmw.add.
+	OpcodeAtomicI32RmwAdd OpcodeAtomic = 0x1e
+	// OpcodeAtomicI64RmwAdd represents the instruction i64.atomic.rmw.add.
+	OpcodeAtomicI64RmwAdd OpcodeAtomic = 0x1f
+	// OpcodeAtomicI32Rmw8AddU represents the instruction i32.atomic.rmw8.add_u.
+	OpcodeAtomicI32Rmw8AddU OpcodeAtomic = 0x20
+	// OpcodeAtomicI32Rmw16AddU represents the instruction i32.atomic.rmw16.add_u.
+	OpcodeAtomicI32Rmw16AddU OpcodeAtomic = 0x21
+	// OpcodeAtomicI64Rmw8AddU represents the instruction i64.atomic.rmw8.add_u.
+	OpcodeAtomicI64Rmw8AddU OpcodeAtomic = 0x22
+	// OpcodeAtomicI64Rmw16AddU represents the instruction i64.atomic.rmw16.add_u.
+	OpcodeAtomicI64Rmw16AddU OpcodeAtomic = 0x23
+	// OpcodeAtomicI64Rmw32AddU represents the instruction i64.atomic.rmw32.add_u.
+	OpcodeAtomicI64Rmw32AddU OpcodeAtomic = 0x24
+
+	// OpcodeAtomicI32RmwSub represents the instruction i32.atomic.rmw.sub.
+	OpcodeAtomicI32RmwSub OpcodeAtomic = 0x25
+	// OpcodeAtomicI64RmwSub represents the instruction i64.atomic.rmw.sub.
+	OpcodeAtomicI64RmwSub OpcodeAtomic = 0x26
+	// OpcodeAtomicI32Rmw8SubU represents the instruction i32.atomic.rmw8.sub_u.
+	OpcodeAtomicI32Rmw8SubU OpcodeAtomic = 0x27
+	// OpcodeAtomicI32Rmw16SubU represents the instruction i32.atomic.rmw16.sub_u.
+	OpcodeAtomicI32Rmw16SubU OpcodeAtomic = 0x28
+	// OpcodeAtomicI64Rmw8SubU represents the instruction i64.atomic.rmw8.sub_u.
+	OpcodeAtomicI64Rmw8SubU OpcodeAtomic = 0x29
+	// OpcodeAtomicI64Rmw16SubU represents the instruction i64.atomic.rmw16.sub_u.
+	OpcodeAtomicI64Rmw16SubU OpcodeAtomic = 0x2a
+	// OpcodeAtomicI64Rmw32SubU represents the instruction i64.atomic.rmw32.sub_u.
+	OpcodeAtomicI64Rmw32SubU OpcodeAtomic = 0x2b
+
+	// OpcodeAtomicI32RmwAnd represents the instruction i32.atomic.rmw.and.
+	OpcodeAtomicI32RmwAnd OpcodeAtomic = 0x2c
+	// OpcodeAtomicI64RmwAnd represents the instruction i64.atomic.rmw.and.
+	OpcodeAtomicI64RmwAnd OpcodeAtomic = 0x2d
+	// OpcodeAtomicI32Rmw8AndU represents the instruction i32.atomic.rmw8.and_u.
+	OpcodeAtomicI32Rmw8AndU OpcodeAtomic = 0x2e
+	// OpcodeAtomicI32Rmw16AndU represents the instruction i32.atomic.rmw16.and_u.
+	OpcodeAtomicI32Rmw16AndU OpcodeAtomic = 0x2f
+	// OpcodeAtomicI64Rmw8AndU represents the instruction i64.atomic.rmw8.and_u.
+	OpcodeAtomicI64Rmw8AndU OpcodeAtomic = 0x30
+	// OpcodeAtomicI64Rmw16AndU represents the instruction i64.atomic.rmw16.and_u.
+	OpcodeAtomicI64Rmw16AndU OpcodeAtomic = 0x31
+	// OpcodeAtomicI64Rmw32AndU represents the instruction i64.atomic.rmw32.and_u.
+	OpcodeAtomicI64Rmw32AndU OpcodeAtomic = 0x32
+
+	// OpcodeAtomicI32RmwOr represents the instruction i32.atomic.rmw.or.
+	OpcodeAtomicI32RmwOr OpcodeAtomic = 0x33
+	// OpcodeAtomicI64RmwOr represents the instruction i64.atomic.rmw.or.
+	OpcodeAtomicI64RmwOr OpcodeAtomic = 0x34
+	// OpcodeAtomicI32Rmw8OrU represents the instruction i32.atomic.rmw8.or_u.
+	OpcodeAtomicI32Rmw8OrU OpcodeAtomic = 0x35
+	// OpcodeAtomicI32Rmw16OrU represents the instruction i32.atomic.rmw16.or_u.
+	OpcodeAtomicI32Rmw16OrU OpcodeAtomic = 0x36
+	// OpcodeAtomicI64Rmw8OrU represents the instruction i64.atomic.rmw8.or_u.
+	OpcodeAtomicI64Rmw8OrU OpcodeAtomic = 0x37
+	// OpcodeAtomicI64Rmw16OrU represents the instruction i64.atomic.rmw16.or_u.
+	OpcodeAtomicI64Rmw16OrU OpcodeAtomic = 0x38
+	// OpcodeAtomicI64Rmw32OrU represents the instruction i64.atomic.rmw32.or_u.
+	OpcodeAtomicI64Rmw32OrU OpcodeAtomic = 0x39
+
+	// OpcodeAtomicI32RmwXor represents the instruction i32.atomic.rmw.xor.
+	OpcodeAtomicI32RmwXor OpcodeAtomic = 0x3a
+	// OpcodeAtomicI64RmwXor represents the instruction i64.atomic.rmw.xor.
+	OpcodeAtomicI64RmwXor OpcodeAtomic = 0x3b
+	// OpcodeAtomicI32Rmw8XorU represents the instruction i32.atomic.rmw8.xor_u.
+	OpcodeAtomicI32Rmw8XorU OpcodeAtomic = 0x3c
+	// OpcodeAtomicI32Rmw16XorU represents the instruction i32.atomic.rmw16.xor_u.
+	OpcodeAtomicI32Rmw16XorU OpcodeAtomic = 0x3d
+	// OpcodeAtomicI64Rmw8XorU represents the instruction i64.atomic.rmw8.xor_u.
+	OpcodeAtomicI64Rmw8XorU OpcodeAtomic = 0x3e
+	// OpcodeAtomicI64Rmw16XorU represents the instruction i64.atomic.rmw16.xor_u.
+	OpcodeAtomicI64Rmw16XorU OpcodeAtomic = 0x3f
+	// OpcodeAtomicI64Rmw32XorU represents the instruction i64.atomic.rmw32.xor_u.
+	OpcodeAtomicI64Rmw32XorU OpcodeAtomic = 0x40
+
+	// OpcodeAtomicI32RmwXchg represents the instruction i32.atomic.rmw.xchg.
+	OpcodeAtomicI32RmwXchg OpcodeAtomic = 0x41
+	// OpcodeAtomicI64RmwXchg represents the instruction i64.atomic.rmw.xchg.
+	OpcodeAtomicI64RmwXchg OpcodeAtomic = 0x42
+	// OpcodeAtomicI32Rmw8XchgU represents the instruction i32.atomic.rmw8.xchg_u.
+	OpcodeAtomicI32Rmw8XchgU OpcodeAtomic = 0x43
+	// OpcodeAtomicI32Rmw16XchgU represents the instruction i32.atomic.rmw16.xchg_u.
+	OpcodeAtomicI32Rmw16XchgU OpcodeAtomic = 0x44
+	// OpcodeAtomicI64Rmw8XchgU represents the instruction i64.atomic.rmw8.xchg_u.
+	OpcodeAtomicI64Rmw8XchgU OpcodeAtomic = 0x45
+	// OpcodeAtomicI64Rmw16XchgU represents the instruction i64.atomic.rmw16.xchg_u.
+	OpcodeAtomicI64Rmw16XchgU OpcodeAtomic = 0x46
+	// OpcodeAtomicI64Rmw32XchgU represents the instruction i64.atomic.rmw32.xchg_u.
+	OpcodeAtomicI64Rmw32XchgU OpcodeAtomic = 0x47
+
+	// OpcodeAtomicI32RmwCmpxchg represents the instruction i32.atomic.rmw.cmpxchg.
+	OpcodeAtomicI32RmwCmpxchg OpcodeAtomic = 0x48
+	// OpcodeAtomicI64RmwCmpxchg represents the instruction i64.atomic.rmw.cmpxchg.
+	OpcodeAtomicI64RmwCmpxchg OpcodeAtomic = 0x49
+	// OpcodeAtomicI32Rmw8CmpxchgU represents the instruction i32.atomic.rmw8.cmpxchg_u.
+	OpcodeAtomicI32Rmw8CmpxchgU OpcodeAtomic = 0x4a
+	// OpcodeAtomicI32Rmw16CmpxchgU represents the instruction i32.atomic.rmw16.cmpxchg_u.
+	OpcodeAtomicI32Rmw16CmpxchgU OpcodeAtomic = 0x4b
+	// OpcodeAtomicI64Rmw8CmpxchgU represents the instruction i64.atomic.rmw8.cmpxchg_u.
+	OpcodeAtomicI64Rmw8CmpxchgU OpcodeAtomic = 0x4c
+	// OpcodeAtomicI64Rmw16CmpxchgU represents the instruction i64.atomic.rmw16.cmpxchg_u.
+	OpcodeAtomicI64Rmw16CmpxchgU OpcodeAtomic = 0x4d
+	// OpcodeAtomicI64Rmw32CmpxchgU represents the instruction i64.atomic.rmw32.cmpxchg_u.
+	OpcodeAtomicI64Rmw32CmpxchgU OpcodeAtomic = 0x4e
 )
 
 const (
@@ -783,7 +937,7 @@ const (
 	OpcodeI64TruncF32UName      = "i64.trunc_f32_u"
 	OpcodeI64TruncF64SName      = "i64.trunc_f64_s"
 	OpcodeI64TruncF64UName      = "i64.trunc_f64_u"
-	OpcodeF32ConvertI32sName    = "f32.convert_i32_s"
+	OpcodeF32ConvertI32SName    = "f32.convert_i32_s"
 	OpcodeF32ConvertI32UName    = "f32.convert_i32_u"
 	OpcodeF32ConvertI64SName    = "f32.convert_i64_s"
 	OpcodeF32ConvertI64UName    = "f32.convert_i64u"
@@ -805,7 +959,7 @@ const (
 	OpcodeTableGetName = "table.get"
 	OpcodeTableSetName = "table.set"
 
-	// Below are toggled with FeatureSignExtensionOps
+	// Below are toggled with CoreFeatureSignExtensionOps
 
 	OpcodeI32Extend8SName  = "i32.extend8_s"
 	OpcodeI32Extend16SName = "i32.extend16_s"
@@ -813,8 +967,9 @@ const (
 	OpcodeI64Extend16SName = "i64.extend16_s"
 	OpcodeI64Extend32SName = "i64.extend32_s"
 
-	OpcodeMiscPrefixName = "misc_prefix"
-	OpcodeVecPrefixName  = "vector_prefix"
+	OpcodeMiscPrefixName   = "misc_prefix"
+	OpcodeVecPrefixName    = "vector_prefix"
+	OpcodeAtomicPrefixName = "atomic_prefix"
 )
 
 var instructionNames = [256]string{
@@ -977,7 +1132,7 @@ var instructionNames = [256]string{
 	OpcodeI64TruncF32U:      OpcodeI64TruncF32UName,
 	OpcodeI64TruncF64S:      OpcodeI64TruncF64SName,
 	OpcodeI64TruncF64U:      OpcodeI64TruncF64UName,
-	OpcodeF32ConvertI32s:    OpcodeF32ConvertI32sName,
+	OpcodeF32ConvertI32S:    OpcodeF32ConvertI32SName,
 	OpcodeF32ConvertI32U:    OpcodeF32ConvertI32UName,
 	OpcodeF32ConvertI64S:    OpcodeF32ConvertI64SName,
 	OpcodeF32ConvertI64U:    OpcodeF32ConvertI64UName,
@@ -999,7 +1154,7 @@ var instructionNames = [256]string{
 	OpcodeTableGet: OpcodeTableGetName,
 	OpcodeTableSet: OpcodeTableSetName,
 
-	// Below are toggled with FeatureSignExtensionOps
+	// Below are toggled with CoreFeatureSignExtensionOps
 
 	OpcodeI32Extend8S:  OpcodeI32Extend8SName,
 	OpcodeI32Extend16S: OpcodeI32Extend16SName,
@@ -1068,12 +1223,12 @@ func MiscInstructionName(oc OpcodeMisc) string {
 
 const (
 	OpcodeVecV128LoadName                  = "v128.load"
-	OpcodeVecV128Load8x8_sName             = "v128.load8x8_s"
-	OpcodeVecV128Load8x8_uName             = "v128.load8x8_u"
-	OpcodeVecV128Load16x4_sName            = "v128.load16x4_s"
-	OpcodeVecV128Load16x4_uName            = "v128.load16x4_u"
-	OpcodeVecV128Load32x2_sName            = "v128.load32x2_s"
-	OpcodeVecV128Load32x2_uName            = "v128.load32x2_u"
+	OpcodeVecV128Load8x8SName              = "v128.load8x8_s"
+	OpcodeVecV128Load8x8UName              = "v128.load8x8_u"
+	OpcodeVecV128Load16x4SName             = "v128.load16x4_s"
+	OpcodeVecV128Load16x4UName             = "v128.load16x4_u"
+	OpcodeVecV128Load32x2SName             = "v128.load32x2_s"
+	OpcodeVecV128Load32x2UName             = "v128.load32x2_u"
 	OpcodeVecV128Load8SplatName            = "v128.load8_splat"
 	OpcodeVecV128Load16SplatName           = "v128.load16_splat"
 	OpcodeVecV128Load32SplatName           = "v128.load32_splat"
@@ -1094,9 +1249,9 @@ const (
 	OpcodeVecI8x16ExtractLaneSName         = "i8x16.extract_lane_s"
 	OpcodeVecI8x16ExtractLaneUName         = "i8x16.extract_lane_u"
 	OpcodeVecI8x16ReplaceLaneName          = "i8x16.replace_lane"
-	OpcodeVecI16x8ExtractLaneSName         = "i16x4.extract_lane_s"
-	OpcodeVecI16x8ExtractLaneUName         = "i16x4.extract_lane_u"
-	OpcodeVecI16x8ReplaceLaneName          = "i16x4.replace"
+	OpcodeVecI16x8ExtractLaneSName         = "i16x8.extract_lane_s"
+	OpcodeVecI16x8ExtractLaneUName         = "i16x8.extract_lane_u"
+	OpcodeVecI16x8ReplaceLaneName          = "i16x8.replace_lane"
 	OpcodeVecI32x4ExtractLaneName          = "i32x4.extract_lane"
 	OpcodeVecI32x4ReplaceLaneName          = "i32x4.replace_lane"
 	OpcodeVecI64x2ExtractLaneName          = "i64x2.extract_lane"
@@ -1187,12 +1342,12 @@ const (
 	OpcodeVecI8x16MinUName                 = "i8x16.min_u"
 	OpcodeVecI8x16MaxSName                 = "i8x16.max_s"
 	OpcodeVecI8x16MaxUName                 = "i8x16.max_u"
-	OpcodeVecI8x16ArgrUName                = "i8x16.argr_u"
+	OpcodeVecI8x16AvgrUName                = "i8x16.avgr_u"
 	OpcodeVecI16x8ExtaddPairwiseI8x16SName = "i16x8.extadd_pairwise_i8x16_s"
 	OpcodeVecI16x8ExtaddPairwiseI8x16UName = "i16x8.extadd_pairwise_i8x16_u"
 	OpcodeVecI16x8AbsName                  = "i16x8.abs"
 	OpcodeVecI16x8NegName                  = "i16x8.neg"
-	OpcodeVecI16x8Q16mulrSatSName          = "i16x8.q15mulr_sat_s"
+	OpcodeVecI16x8Q15mulrSatSName          = "i16x8.q15mulr_sat_s"
 	OpcodeVecI16x8AllTrueName              = "i16x8.all_true"
 	OpcodeVecI16x8BitMaskName              = "i16x8.bitmask"
 	OpcodeVecI16x8NarrowI32x4SName         = "i16x8.narrow_i32x4_s"
@@ -1215,7 +1370,7 @@ const (
 	OpcodeVecI16x8MinUName                 = "i16x8.min_u"
 	OpcodeVecI16x8MaxSName                 = "i16x8.max_s"
 	OpcodeVecI16x8MaxUName                 = "i16x8.max_u"
-	OpcodeVecI16x8ArgrUName                = "i16x8.argr_u"
+	OpcodeVecI16x8AvgrUName                = "i16x8.avgr_u"
 	OpcodeVecI16x8ExtMulLowI8x16SName      = "i16x8.extmul_low_i8x16_s"
 	OpcodeVecI16x8ExtMulHighI8x16SName     = "i16x8.extmul_high_i8x16_s"
 	OpcodeVecI16x8ExtMulLowI8x16UName      = "i16x8.extmul_low_i8x16_u"
@@ -1278,41 +1433,41 @@ const (
 	OpcodeVecF32x4MaxName                  = "f32x4.max"
 	OpcodeVecF32x4PminName                 = "f32x4.pmin"
 	OpcodeVecF32x4PmaxName                 = "f32x4.pmax"
-	OpcodeVecF64x4CeilName                 = "f64x2.ceil"
-	OpcodeVecF64x4FloorName                = "f64x2.floor"
-	OpcodeVecF64x4TruncName                = "f64x2.trunc"
-	OpcodeVecF64x4NearestName              = "f64x2.nearest"
-	OpcodeVecF64x4AbsName                  = "f64x2.abs"
-	OpcodeVecF64x4NegName                  = "f64x2.neg"
-	OpcodeVecF64x4SqrtName                 = "f64x2.sqrt"
-	OpcodeVecF64x4AddName                  = "f64x2.add"
-	OpcodeVecF64x4SubName                  = "f64x2.sub"
-	OpcodeVecF64x4MulName                  = "f64x2.mul"
-	OpcodeVecF64x4DivName                  = "f64x2.div"
-	OpcodeVecF64x4MinName                  = "f64x2.min"
-	OpcodeVecF64x4MaxName                  = "f64x2.max"
-	OpcodeVecF64x4PminName                 = "f64x2.pmin"
-	OpcodeVecF64x4PmaxName                 = "f64x2.pmax"
+	OpcodeVecF64x2CeilName                 = "f64x2.ceil"
+	OpcodeVecF64x2FloorName                = "f64x2.floor"
+	OpcodeVecF64x2TruncName                = "f64x2.trunc"
+	OpcodeVecF64x2NearestName              = "f64x2.nearest"
+	OpcodeVecF64x2AbsName                  = "f64x2.abs"
+	OpcodeVecF64x2NegName                  = "f64x2.neg"
+	OpcodeVecF64x2SqrtName                 = "f64x2.sqrt"
+	OpcodeVecF64x2AddName                  = "f64x2.add"
+	OpcodeVecF64x2SubName                  = "f64x2.sub"
+	OpcodeVecF64x2MulName                  = "f64x2.mul"
+	OpcodeVecF64x2DivName                  = "f64x2.div"
+	OpcodeVecF64x2MinName                  = "f64x2.min"
+	OpcodeVecF64x2MaxName                  = "f64x2.max"
+	OpcodeVecF64x2PminName                 = "f64x2.pmin"
+	OpcodeVecF64x2PmaxName                 = "f64x2.pmax"
 	OpcodeVecI32x4TruncSatF32x4SName       = "i32x4.trunc_sat_f32x4_s"
 	OpcodeVecI32x4TruncSatF32x4UName       = "i32x4.trunc_sat_f32x4_u"
 	OpcodeVecF32x4ConvertI32x4SName        = "f32x4.convert_i32x4_s"
 	OpcodeVecF32x4ConvertI32x4UName        = "f32x4.convert_i32x4_u"
 	OpcodeVecI32x4TruncSatF64x2SZeroName   = "i32x4.trunc_sat_f64x2_s_zero"
 	OpcodeVecI32x4TruncSatF64x2UZeroName   = "i32x4.trunc_sat_f64x2_u_zero"
-	OpcodeVecF64x2ConvertI32x4SName        = "f64x2.convert_low_i32x4_s"
-	OpcodeVecF64x2ConvertI32x4UName        = "f64x2.convert_low_i32x4_u"
+	OpcodeVecF64x2ConvertLowI32x4SName     = "f64x2.convert_low_i32x4_s"
+	OpcodeVecF64x2ConvertLowI32x4UName     = "f64x2.convert_low_i32x4_u"
 	OpcodeVecF32x4DemoteF64x2ZeroName      = "f32x4.demote_f64x2_zero"
 	OpcodeVecF64x2PromoteLowF32x4ZeroName  = "f64x2.promote_low_f32x4"
 )
 
 var vectorInstructionName = map[OpcodeVec]string{
 	OpcodeVecV128Load:                  OpcodeVecV128LoadName,
-	OpcodeVecV128Load8x8_s:             OpcodeVecV128Load8x8_sName,
-	OpcodeVecV128Load8x8_u:             OpcodeVecV128Load8x8_uName,
-	OpcodeVecV128Load16x4_s:            OpcodeVecV128Load16x4_sName,
-	OpcodeVecV128Load16x4_u:            OpcodeVecV128Load16x4_uName,
-	OpcodeVecV128Load32x2_s:            OpcodeVecV128Load32x2_sName,
-	OpcodeVecV128Load32x2_u:            OpcodeVecV128Load32x2_uName,
+	OpcodeVecV128Load8x8s:              OpcodeVecV128Load8x8SName,
+	OpcodeVecV128Load8x8u:              OpcodeVecV128Load8x8UName,
+	OpcodeVecV128Load16x4s:             OpcodeVecV128Load16x4SName,
+	OpcodeVecV128Load16x4u:             OpcodeVecV128Load16x4UName,
+	OpcodeVecV128Load32x2s:             OpcodeVecV128Load32x2SName,
+	OpcodeVecV128Load32x2u:             OpcodeVecV128Load32x2UName,
 	OpcodeVecV128Load8Splat:            OpcodeVecV128Load8SplatName,
 	OpcodeVecV128Load16Splat:           OpcodeVecV128Load16SplatName,
 	OpcodeVecV128Load32Splat:           OpcodeVecV128Load32SplatName,
@@ -1426,12 +1581,12 @@ var vectorInstructionName = map[OpcodeVec]string{
 	OpcodeVecI8x16MinU:                 OpcodeVecI8x16MinUName,
 	OpcodeVecI8x16MaxS:                 OpcodeVecI8x16MaxSName,
 	OpcodeVecI8x16MaxU:                 OpcodeVecI8x16MaxUName,
-	OpcodeVecI8x16ArgrU:                OpcodeVecI8x16ArgrUName,
+	OpcodeVecI8x16AvgrU:                OpcodeVecI8x16AvgrUName,
 	OpcodeVecI16x8ExtaddPairwiseI8x16S: OpcodeVecI16x8ExtaddPairwiseI8x16SName,
 	OpcodeVecI16x8ExtaddPairwiseI8x16U: OpcodeVecI16x8ExtaddPairwiseI8x16UName,
 	OpcodeVecI16x8Abs:                  OpcodeVecI16x8AbsName,
 	OpcodeVecI16x8Neg:                  OpcodeVecI16x8NegName,
-	OpcodeVecI16x8Q16mulrSatS:          OpcodeVecI16x8Q16mulrSatSName,
+	OpcodeVecI16x8Q15mulrSatS:          OpcodeVecI16x8Q15mulrSatSName,
 	OpcodeVecI16x8AllTrue:              OpcodeVecI16x8AllTrueName,
 	OpcodeVecI16x8BitMask:              OpcodeVecI16x8BitMaskName,
 	OpcodeVecI16x8NarrowI32x4S:         OpcodeVecI16x8NarrowI32x4SName,
@@ -1454,7 +1609,7 @@ var vectorInstructionName = map[OpcodeVec]string{
 	OpcodeVecI16x8MinU:                 OpcodeVecI16x8MinUName,
 	OpcodeVecI16x8MaxS:                 OpcodeVecI16x8MaxSName,
 	OpcodeVecI16x8MaxU:                 OpcodeVecI16x8MaxUName,
-	OpcodeVecI16x8ArgrU:                OpcodeVecI16x8ArgrUName,
+	OpcodeVecI16x8AvgrU:                OpcodeVecI16x8AvgrUName,
 	OpcodeVecI16x8ExtMulLowI8x16S:      OpcodeVecI16x8ExtMulLowI8x16SName,
 	OpcodeVecI16x8ExtMulHighI8x16S:     OpcodeVecI16x8ExtMulHighI8x16SName,
 	OpcodeVecI16x8ExtMulLowI8x16U:      OpcodeVecI16x8ExtMulLowI8x16UName,
@@ -1517,29 +1672,29 @@ var vectorInstructionName = map[OpcodeVec]string{
 	OpcodeVecF32x4Max:                  OpcodeVecF32x4MaxName,
 	OpcodeVecF32x4Pmin:                 OpcodeVecF32x4PminName,
 	OpcodeVecF32x4Pmax:                 OpcodeVecF32x4PmaxName,
-	OpcodeVecF64x4Ceil:                 OpcodeVecF64x4CeilName,
-	OpcodeVecF64x4Floor:                OpcodeVecF64x4FloorName,
-	OpcodeVecF64x4Trunc:                OpcodeVecF64x4TruncName,
-	OpcodeVecF64x4Nearest:              OpcodeVecF64x4NearestName,
-	OpcodeVecF64x4Abs:                  OpcodeVecF64x4AbsName,
-	OpcodeVecF64x4Neg:                  OpcodeVecF64x4NegName,
-	OpcodeVecF64x4Sqrt:                 OpcodeVecF64x4SqrtName,
-	OpcodeVecF64x4Add:                  OpcodeVecF64x4AddName,
-	OpcodeVecF64x4Sub:                  OpcodeVecF64x4SubName,
-	OpcodeVecF64x4Mul:                  OpcodeVecF64x4MulName,
-	OpcodeVecF64x4Div:                  OpcodeVecF64x4DivName,
-	OpcodeVecF64x4Min:                  OpcodeVecF64x4MinName,
-	OpcodeVecF64x4Max:                  OpcodeVecF64x4MaxName,
-	OpcodeVecF64x4Pmin:                 OpcodeVecF64x4PminName,
-	OpcodeVecF64x4Pmax:                 OpcodeVecF64x4PmaxName,
+	OpcodeVecF64x2Ceil:                 OpcodeVecF64x2CeilName,
+	OpcodeVecF64x2Floor:                OpcodeVecF64x2FloorName,
+	OpcodeVecF64x2Trunc:                OpcodeVecF64x2TruncName,
+	OpcodeVecF64x2Nearest:              OpcodeVecF64x2NearestName,
+	OpcodeVecF64x2Abs:                  OpcodeVecF64x2AbsName,
+	OpcodeVecF64x2Neg:                  OpcodeVecF64x2NegName,
+	OpcodeVecF64x2Sqrt:                 OpcodeVecF64x2SqrtName,
+	OpcodeVecF64x2Add:                  OpcodeVecF64x2AddName,
+	OpcodeVecF64x2Sub:                  OpcodeVecF64x2SubName,
+	OpcodeVecF64x2Mul:                  OpcodeVecF64x2MulName,
+	OpcodeVecF64x2Div:                  OpcodeVecF64x2DivName,
+	OpcodeVecF64x2Min:                  OpcodeVecF64x2MinName,
+	OpcodeVecF64x2Max:                  OpcodeVecF64x2MaxName,
+	OpcodeVecF64x2Pmin:                 OpcodeVecF64x2PminName,
+	OpcodeVecF64x2Pmax:                 OpcodeVecF64x2PmaxName,
 	OpcodeVecI32x4TruncSatF32x4S:       OpcodeVecI32x4TruncSatF32x4SName,
 	OpcodeVecI32x4TruncSatF32x4U:       OpcodeVecI32x4TruncSatF32x4UName,
 	OpcodeVecF32x4ConvertI32x4S:        OpcodeVecF32x4ConvertI32x4SName,
 	OpcodeVecF32x4ConvertI32x4U:        OpcodeVecF32x4ConvertI32x4UName,
 	OpcodeVecI32x4TruncSatF64x2SZero:   OpcodeVecI32x4TruncSatF64x2SZeroName,
 	OpcodeVecI32x4TruncSatF64x2UZero:   OpcodeVecI32x4TruncSatF64x2UZeroName,
-	OpcodeVecF64x2ConvertI32x4S:        OpcodeVecF64x2ConvertI32x4SName,
-	OpcodeVecF64x2ConvertI32x4U:        OpcodeVecF64x2ConvertI32x4UName,
+	OpcodeVecF64x2ConvertLowI32x4S:     OpcodeVecF64x2ConvertLowI32x4SName,
+	OpcodeVecF64x2ConvertLowI32x4U:     OpcodeVecF64x2ConvertLowI32x4UName,
 	OpcodeVecF32x4DemoteF64x2Zero:      OpcodeVecF32x4DemoteF64x2ZeroName,
 	OpcodeVecF64x2PromoteLowF32x4Zero:  OpcodeVecF64x2PromoteLowF32x4ZeroName,
 }
@@ -1547,4 +1702,165 @@ var vectorInstructionName = map[OpcodeVec]string{
 // VectorInstructionName returns the instruction name corresponding to the vector Opcode.
 func VectorInstructionName(oc OpcodeVec) (ret string) {
 	return vectorInstructionName[oc]
+}
+
+const (
+	OpcodeAtomicMemoryNotifyName = "memory.atomic.notify"
+	OpcodeAtomicMemoryWait32Name = "memory.atomic.wait32"
+	OpcodeAtomicMemoryWait64Name = "memory.atomic.wait64"
+	OpcodeAtomicFenceName        = "atomic.fence"
+
+	OpcodeAtomicI32LoadName    = "i32.atomic.load"
+	OpcodeAtomicI64LoadName    = "i64.atomic.load"
+	OpcodeAtomicI32Load8UName  = "i32.atomic.load8_u"
+	OpcodeAtomicI32Load16UName = "i32.atomic.load16_u"
+	OpcodeAtomicI64Load8UName  = "i64.atomic.load8_u"
+	OpcodeAtomicI64Load16UName = "i64.atomic.load16_u"
+	OpcodeAtomicI64Load32UName = "i64.atomic.load32_u"
+	OpcodeAtomicI32StoreName   = "i32.atomic.store"
+	OpcodeAtomicI64StoreName   = "i64.atomic.store"
+	OpcodeAtomicI32Store8Name  = "i32.atomic.store8"
+	OpcodeAtomicI32Store16Name = "i32.atomic.store16"
+	OpcodeAtomicI64Store8Name  = "i64.atomic.store8"
+	OpcodeAtomicI64Store16Name = "i64.atomic.store16"
+	OpcodeAtomicI64Store32Name = "i64.atomic.store32"
+
+	OpcodeAtomicI32RmwAddName    = "i32.atomic.rmw.add"
+	OpcodeAtomicI64RmwAddName    = "i64.atomic.rmw.add"
+	OpcodeAtomicI32Rmw8AddUName  = "i32.atomic.rmw8.add_u"
+	OpcodeAtomicI32Rmw16AddUName = "i32.atomic.rmw16.add_u"
+	OpcodeAtomicI64Rmw8AddUName  = "i64.atomic.rmw8.add_u"
+	OpcodeAtomicI64Rmw16AddUName = "i64.atomic.rmw16.add_u"
+	OpcodeAtomicI64Rmw32AddUName = "i64.atomic.rmw32.add_u"
+
+	OpcodeAtomicI32RmwSubName    = "i32.atomic.rmw.sub"
+	OpcodeAtomicI64RmwSubName    = "i64.atomic.rmw.sub"
+	OpcodeAtomicI32Rmw8SubUName  = "i32.atomic.rmw8.sub_u"
+	OpcodeAtomicI32Rmw16SubUName = "i32.atomic.rmw16.sub_u"
+	OpcodeAtomicI64Rmw8SubUName  = "i64.atomic.rmw8.sub_u"
+	OpcodeAtomicI64Rmw16SubUName = "i64.atomic.rmw16.sub_u"
+	OpcodeAtomicI64Rmw32SubUName = "i64.atomic.rmw32.sub_u"
+
+	OpcodeAtomicI32RmwAndName    = "i32.atomic.rmw.and"
+	OpcodeAtomicI64RmwAndName    = "i64.atomic.rmw.and"
+	OpcodeAtomicI32Rmw8AndUName  = "i32.atomic.rmw8.and_u"
+	OpcodeAtomicI32Rmw16AndUName = "i32.atomic.rmw16.and_u"
+	OpcodeAtomicI64Rmw8AndUName  = "i64.atomic.rmw8.and_u"
+	OpcodeAtomicI64Rmw16AndUName = "i64.atomic.rmw16.and_u"
+	OpcodeAtomicI64Rmw32AndUName = "i64.atomic.rmw32.and_u"
+
+	OpcodeAtomicI32RmwOrName    = "i32.atomic.rmw.or"
+	OpcodeAtomicI64RmwOrName    = "i64.atomic.rmw.or"
+	OpcodeAtomicI32Rmw8OrUName  = "i32.atomic.rmw8.or_u"
+	OpcodeAtomicI32Rmw16OrUName = "i32.atomic.rmw16.or_u"
+	OpcodeAtomicI64Rmw8OrUName  = "i64.atomic.rmw8.or_u"
+	OpcodeAtomicI64Rmw16OrUName = "i64.atomic.rmw16.or_u"
+	OpcodeAtomicI64Rmw32OrUName = "i64.atomic.rmw32.or_u"
+
+	OpcodeAtomicI32RmwXorName    = "i32.atomic.rmw.xor"
+	OpcodeAtomicI64RmwXorName    = "i64.atomic.rmw.xor"
+	OpcodeAtomicI32Rmw8XorUName  = "i32.atomic.rmw8.xor_u"
+	OpcodeAtomicI32Rmw16XorUName = "i32.atomic.rmw16.xor_u"
+	OpcodeAtomicI64Rmw8XorUName  = "i64.atomic.rmw8.xor_u"
+	OpcodeAtomicI64Rmw16XorUName = "i64.atomic.rmw16.xor_u"
+	OpcodeAtomicI64Rmw32XorUName = "i64.atomic.rmw32.xor_u"
+
+	OpcodeAtomicI32RmwXchgName    = "i32.atomic.rmw.xchg"
+	OpcodeAtomicI64RmwXchgName    = "i64.atomic.rmw.xchg"
+	OpcodeAtomicI32Rmw8XchgUName  = "i32.atomic.rmw8.xchg_u"
+	OpcodeAtomicI32Rmw16XchgUName = "i32.atomic.rmw16.xchg_u"
+	OpcodeAtomicI64Rmw8XchgUName  = "i64.atomic.rmw8.xchg_u"
+	OpcodeAtomicI64Rmw16XchgUName = "i64.atomic.rmw16.xchg_u"
+	OpcodeAtomicI64Rmw32XchgUName = "i64.atomic.rmw32.xchg_u"
+
+	OpcodeAtomicI32RmwCmpxchgName    = "i32.atomic.rmw.cmpxchg"
+	OpcodeAtomicI64RmwCmpxchgName    = "i64.atomic.rmw.cmpxchg"
+	OpcodeAtomicI32Rmw8CmpxchgUName  = "i32.atomic.rmw8.cmpxchg_u"
+	OpcodeAtomicI32Rmw16CmpxchgUName = "i32.atomic.rmw16.cmpxchg_u"
+	OpcodeAtomicI64Rmw8CmpxchgUName  = "i64.atomic.rmw8.cmpxchg_u"
+	OpcodeAtomicI64Rmw16CmpxchgUName = "i64.atomic.rmw16.cmpxchg_u"
+	OpcodeAtomicI64Rmw32CmpxchgUName = "i64.atomic.rmw32.cmpxchg_u"
+)
+
+var atomicInstructionName = map[OpcodeAtomic]string{
+	OpcodeAtomicMemoryNotify: OpcodeAtomicMemoryNotifyName,
+	OpcodeAtomicMemoryWait32: OpcodeAtomicMemoryWait32Name,
+	OpcodeAtomicMemoryWait64: OpcodeAtomicMemoryWait64Name,
+	OpcodeAtomicFence:        OpcodeAtomicFenceName,
+
+	OpcodeAtomicI32Load:    OpcodeAtomicI32LoadName,
+	OpcodeAtomicI64Load:    OpcodeAtomicI64LoadName,
+	OpcodeAtomicI32Load8U:  OpcodeAtomicI32Load8UName,
+	OpcodeAtomicI32Load16U: OpcodeAtomicI32Load16UName,
+	OpcodeAtomicI64Load8U:  OpcodeAtomicI64Load8UName,
+	OpcodeAtomicI64Load16U: OpcodeAtomicI64Load16UName,
+	OpcodeAtomicI64Load32U: OpcodeAtomicI64Load32UName,
+	OpcodeAtomicI32Store:   OpcodeAtomicI32StoreName,
+	OpcodeAtomicI64Store:   OpcodeAtomicI64StoreName,
+	OpcodeAtomicI32Store8:  OpcodeAtomicI32Store8Name,
+	OpcodeAtomicI32Store16: OpcodeAtomicI32Store16Name,
+	OpcodeAtomicI64Store8:  OpcodeAtomicI64Store8Name,
+	OpcodeAtomicI64Store16: OpcodeAtomicI64Store16Name,
+	OpcodeAtomicI64Store32: OpcodeAtomicI64Store32Name,
+
+	OpcodeAtomicI32RmwAdd:    OpcodeAtomicI32RmwAddName,
+	OpcodeAtomicI64RmwAdd:    OpcodeAtomicI64RmwAddName,
+	OpcodeAtomicI32Rmw8AddU:  OpcodeAtomicI32Rmw8AddUName,
+	OpcodeAtomicI32Rmw16AddU: OpcodeAtomicI32Rmw16AddUName,
+	OpcodeAtomicI64Rmw8AddU:  OpcodeAtomicI64Rmw8AddUName,
+	OpcodeAtomicI64Rmw16AddU: OpcodeAtomicI64Rmw16AddUName,
+	OpcodeAtomicI64Rmw32AddU: OpcodeAtomicI64Rmw32AddUName,
+
+	OpcodeAtomicI32RmwSub:    OpcodeAtomicI32RmwSubName,
+	OpcodeAtomicI64RmwSub:    OpcodeAtomicI64RmwSubName,
+	OpcodeAtomicI32Rmw8SubU:  OpcodeAtomicI32Rmw8SubUName,
+	OpcodeAtomicI32Rmw16SubU: OpcodeAtomicI32Rmw16SubUName,
+	OpcodeAtomicI64Rmw8SubU:  OpcodeAtomicI64Rmw8SubUName,
+	OpcodeAtomicI64Rmw16SubU: OpcodeAtomicI64Rmw16SubUName,
+	OpcodeAtomicI64Rmw32SubU: OpcodeAtomicI64Rmw32SubUName,
+
+	OpcodeAtomicI32RmwAnd:    OpcodeAtomicI32RmwAndName,
+	OpcodeAtomicI64RmwAnd:    OpcodeAtomicI64RmwAndName,
+	OpcodeAtomicI32Rmw8AndU:  OpcodeAtomicI32Rmw8AndUName,
+	OpcodeAtomicI32Rmw16AndU: OpcodeAtomicI32Rmw16AndUName,
+	OpcodeAtomicI64Rmw8AndU:  OpcodeAtomicI64Rmw8AndUName,
+	OpcodeAtomicI64Rmw16AndU: OpcodeAtomicI64Rmw16AndUName,
+	OpcodeAtomicI64Rmw32AndU: OpcodeAtomicI64Rmw32AndUName,
+
+	OpcodeAtomicI32RmwOr:    OpcodeAtomicI32RmwOrName,
+	OpcodeAtomicI64RmwOr:    OpcodeAtomicI64RmwOrName,
+	OpcodeAtomicI32Rmw8OrU:  OpcodeAtomicI32Rmw8OrUName,
+	OpcodeAtomicI32Rmw16OrU: OpcodeAtomicI32Rmw16OrUName,
+	OpcodeAtomicI64Rmw8OrU:  OpcodeAtomicI64Rmw8OrUName,
+	OpcodeAtomicI64Rmw16OrU: OpcodeAtomicI64Rmw16OrUName,
+	OpcodeAtomicI64Rmw32OrU: OpcodeAtomicI64Rmw32OrUName,
+
+	OpcodeAtomicI32RmwXor:    OpcodeAtomicI32RmwXorName,
+	OpcodeAtomicI64RmwXor:    OpcodeAtomicI64RmwXorName,
+	OpcodeAtomicI32Rmw8XorU:  OpcodeAtomicI32Rmw8XorUName,
+	OpcodeAtomicI32Rmw16XorU: OpcodeAtomicI32Rmw16XorUName,
+	OpcodeAtomicI64Rmw8XorU:  OpcodeAtomicI64Rmw8XorUName,
+	OpcodeAtomicI64Rmw16XorU: OpcodeAtomicI64Rmw16XorUName,
+	OpcodeAtomicI64Rmw32XorU: OpcodeAtomicI64Rmw32XorUName,
+
+	OpcodeAtomicI32RmwXchg:    OpcodeAtomicI32RmwXchgName,
+	OpcodeAtomicI64RmwXchg:    OpcodeAtomicI64RmwXchgName,
+	OpcodeAtomicI32Rmw8XchgU:  OpcodeAtomicI32Rmw8XchgUName,
+	OpcodeAtomicI32Rmw16XchgU: OpcodeAtomicI32Rmw16XchgUName,
+	OpcodeAtomicI64Rmw8XchgU:  OpcodeAtomicI64Rmw8XchgUName,
+	OpcodeAtomicI64Rmw16XchgU: OpcodeAtomicI64Rmw16XchgUName,
+	OpcodeAtomicI64Rmw32XchgU: OpcodeAtomicI64Rmw32XchgUName,
+
+	OpcodeAtomicI32RmwCmpxchg:    OpcodeAtomicI32RmwCmpxchgName,
+	OpcodeAtomicI64RmwCmpxchg:    OpcodeAtomicI64RmwCmpxchgName,
+	OpcodeAtomicI32Rmw8CmpxchgU:  OpcodeAtomicI32Rmw8CmpxchgUName,
+	OpcodeAtomicI32Rmw16CmpxchgU: OpcodeAtomicI32Rmw16CmpxchgUName,
+	OpcodeAtomicI64Rmw8CmpxchgU:  OpcodeAtomicI64Rmw8CmpxchgUName,
+	OpcodeAtomicI64Rmw16CmpxchgU: OpcodeAtomicI64Rmw16CmpxchgUName,
+	OpcodeAtomicI64Rmw32CmpxchgU: OpcodeAtomicI64Rmw32CmpxchgUName,
+}
+
+// AtomicInstructionName returns the instruction name corresponding to the atomic Opcode.
+func AtomicInstructionName(oc OpcodeAtomic) (ret string) {
+	return atomicInstructionName[oc]
 }

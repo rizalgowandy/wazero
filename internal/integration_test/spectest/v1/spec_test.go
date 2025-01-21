@@ -1,33 +1,22 @@
-package spectest
+package v1
 
 import (
-	"embed"
-	"runtime"
+	"context"
 	"testing"
 
-	"github.com/tetratelabs/wazero/internal/engine/compiler"
-	"github.com/tetratelabs/wazero/internal/engine/interpreter"
+	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/internal/integration_test/spectest"
-	"github.com/tetratelabs/wazero/internal/wasm"
+	"github.com/tetratelabs/wazero/internal/platform"
 )
 
-//go:embed testdata/*.wasm
-//go:embed testdata/*.json
-var testcases embed.FS
-
-const enabledFeatures = wasm.Features20191205
-
 func TestCompiler(t *testing.T) {
-	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+	if !platform.CompilerSupported() {
 		t.Skip()
 	}
-	spectest.Run(t, testcases, compiler.NewEngine, enabledFeatures, func(string) bool { return true })
+	spectest.Run(t, Testcases, context.Background(), wazero.NewRuntimeConfigCompiler().WithCoreFeatures(api.CoreFeaturesV1))
 }
 
 func TestInterpreter(t *testing.T) {
-	spectest.Run(t, testcases, interpreter.NewEngine, enabledFeatures, func(jsonname string) bool { return true })
-}
-
-func TestBinaryEncoder(t *testing.T) {
-	spectest.TestBinaryEncoder(t, testcases, enabledFeatures)
+	spectest.Run(t, Testcases, context.Background(), wazero.NewRuntimeConfigInterpreter().WithCoreFeatures(api.CoreFeaturesV1))
 }

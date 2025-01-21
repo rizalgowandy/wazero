@@ -6,24 +6,32 @@ import (
 	"math"
 	"strconv"
 	"testing"
-	"unsafe"
 
-	"github.com/tetratelabs/wazero/internal/buildoptions"
-	"github.com/tetratelabs/wazero/internal/testing/enginetest"
+	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/internal/testing/require"
 	"github.com/tetratelabs/wazero/internal/wasm"
-	"github.com/tetratelabs/wazero/internal/wazeroir"
 )
 
+type arbitrary struct{}
+
 // testCtx is an arbitrary, non-default context. Non-nil also prevents linter errors.
-var testCtx = context.WithValue(context.Background(), struct{}{}, "arbitrary")
+var testCtx = context.WithValue(context.Background(), arbitrary{}, "arbitrary")
+
+func TestInterpreter_peekValues(t *testing.T) {
+	ce := &callEngine{}
+	require.Nil(t, ce.peekValues(0))
+
+	ce.stack = []uint64{5, 4, 3, 2, 1}
+	require.Nil(t, ce.peekValues(0))
+	require.Equal(t, []uint64{2, 1}, ce.peekValues(2))
+}
 
 func TestInterpreter_CallEngine_PushFrame(t *testing.T) {
 	f1 := &callFrame{}
 	f2 := &callFrame{}
 
 	ce := callEngine{}
-	require.Equal(t, 0, len(ce.frames), "expected no frames")
+	require.Zero(t, len(ce.frames), "expected no frames")
 
 	ce.pushFrame(f1)
 	require.Equal(t, []*callFrame{f1}, ce.frames)
@@ -33,7 +41,8 @@ func TestInterpreter_CallEngine_PushFrame(t *testing.T) {
 }
 
 func TestInterpreter_CallEngine_PushFrame_StackOverflow(t *testing.T) {
-	defer func() { callStackCeiling = buildoptions.CallStackCeiling }()
+	saved := callStackCeiling
+	defer func() { callStackCeiling = saved }()
 
 	callStackCeiling = 3
 
@@ -48,69 +57,7 @@ func TestInterpreter_CallEngine_PushFrame_StackOverflow(t *testing.T) {
 	vm.pushFrame(f3)
 
 	captured := require.CapturePanic(func() { vm.pushFrame(f4) })
-	require.EqualError(t, captured, "callstack overflow")
-}
-
-// et is used for tests defined in the enginetest package.
-var et = &engineTester{}
-
-// engineTester implements enginetest.EngineTester.
-type engineTester struct{}
-
-// NewEngine implements enginetest.EngineTester NewEngine.
-func (e engineTester) NewEngine(enabledFeatures wasm.Features) wasm.Engine {
-	return NewEngine(enabledFeatures)
-}
-
-// InitTables implements enginetest.EngineTester InitTables.
-func (e engineTester) InitTables(me wasm.ModuleEngine, tableIndexToLen map[wasm.Index]int, tableInits []wasm.TableInitEntry) [][]wasm.Reference {
-	references := make([][]wasm.Reference, len(tableIndexToLen))
-	for tableIndex, l := range tableIndexToLen {
-		references[tableIndex] = make([]wasm.Reference, l)
-	}
-	internal := me.(*moduleEngine)
-
-	for _, init := range tableInits {
-		referencesPerTable := references[init.TableIndex]
-		for idx, fnidx := range init.FunctionIndexes {
-			referencesPerTable[int(init.Offset)+idx] = uintptr(unsafe.Pointer(internal.functions[*fnidx]))
-		}
-	}
-	return references
-}
-
-// CompiledFunctionPointerValue implements enginetest.EngineTester CompiledFunctionPointerValue.
-func (e engineTester) CompiledFunctionPointerValue(me wasm.ModuleEngine, funcIndex wasm.Index) uint64 {
-	internal := me.(*moduleEngine)
-	return uint64(uintptr(unsafe.Pointer(internal.functions[funcIndex])))
-}
-
-func TestInterpreter_Engine_NewModuleEngine(t *testing.T) {
-	enginetest.RunTestEngine_NewModuleEngine(t, et)
-}
-
-func TestInterpreter_Engine_InitializeFuncrefGlobals(t *testing.T) {
-	enginetest.RunTestEngine_InitializeFuncrefGlobals(t, et)
-}
-
-func TestInterpreter_Engine_NewModuleEngine_InitTable(t *testing.T) {
-	enginetest.RunTestEngine_NewModuleEngine_InitTable(t, et)
-}
-
-func TestInterpreter_ModuleEngine_Call(t *testing.T) {
-	enginetest.RunTestModuleEngine_Call(t, et)
-}
-
-func TestInterpreter_ModuleEngine_Call_HostFn(t *testing.T) {
-	enginetest.RunTestModuleEngine_Call_HostFn(t, et)
-}
-
-func TestInterpreter_ModuleEngine_Call_Errors(t *testing.T) {
-	enginetest.RunTestModuleEngine_Call_Errors(t, et)
-}
-
-func TestInterpreter_ModuleEngine_Memory(t *testing.T) {
-	enginetest.RunTestModuleEngine_Memory(t, et)
+	require.EqualError(t, captured, "stack overflow")
 }
 
 func TestInterpreter_NonTrappingFloatToIntConversion(t *testing.T) {
@@ -121,8 +68,8 @@ func TestInterpreter_NonTrappingFloatToIntConversion(t *testing.T) {
 
 	tests := []struct {
 		op            wasm.OpcodeMisc
-		inputType     wazeroir.Float
-		outputType    wazeroir.SignedInt
+		inputType     float
+		outputType    signedInt
 		input32bit    []float32
 		input64bit    []float64
 		expected32bit []int32
@@ -131,8 +78,8 @@ func TestInterpreter_NonTrappingFloatToIntConversion(t *testing.T) {
 		{
 			// https://github.com/WebAssembly/spec/blob/c8fd933fa51eb0b511bce027b573aef7ee373726/test/core/conversions.wast#L261-L282
 			op:         wasm.OpcodeMiscI32TruncSatF32S,
-			inputType:  wazeroir.Float32,
-			outputType: wazeroir.SignedInt32,
+			inputType:  f32,
+			outputType: signedInt32,
 			input32bit: []float32{
 				0.0, 0.0, 0x1p-149, -0x1p-149, 1.0, 0x1.19999ap+0, 1.5, -1.0, -0x1.19999ap+0,
 				-1.5, -1.9, -2.0, 2147483520.0, -2147483648.0, 2147483648.0, -2147483904.0,
@@ -147,8 +94,8 @@ func TestInterpreter_NonTrappingFloatToIntConversion(t *testing.T) {
 		{
 			// https://github.com/WebAssembly/spec/blob/c8fd933fa51eb0b511bce027b573aef7ee373726/test/core/conversions.wast#L284-L304
 			op:         wasm.OpcodeMiscI32TruncSatF32U,
-			inputType:  wazeroir.Float32,
-			outputType: wazeroir.SignedUint32,
+			inputType:  f32,
+			outputType: signedUint32,
 			input32bit: []float32{
 				0.0, 0.0, 0x1p-149, -0x1p-149, 1.0, 0x1.19999ap+0, 1.5, 1.9, 2.0, 2147483648, 4294967040.0,
 				-0x1.ccccccp-1, -0x1.fffffep-1, 4294967296.0, -1.0, float32(math.Inf(1)), float32(math.Inf(-1)),
@@ -162,8 +109,8 @@ func TestInterpreter_NonTrappingFloatToIntConversion(t *testing.T) {
 		{
 			// https://github.com/WebAssembly/spec/blob/c8fd933fa51eb0b511bce027b573aef7ee373726/test/core/conversions.wast#L355-L378
 			op:         wasm.OpcodeMiscI64TruncSatF32S,
-			inputType:  wazeroir.Float32,
-			outputType: wazeroir.SignedInt64,
+			inputType:  f32,
+			outputType: signedInt64,
 			input32bit: []float32{
 				0.0, 0.0, 0x1p-149, -0x1p-149, 1.0, 0x1.19999ap+0, 1.5, -1.0, -0x1.19999ap+0, -1.5, -1.9, -2.0, 4294967296,
 				-4294967296, 9223371487098961920.0, -9223372036854775808.0, 9223372036854775808.0, -9223373136366403584.0,
@@ -178,8 +125,8 @@ func TestInterpreter_NonTrappingFloatToIntConversion(t *testing.T) {
 		{
 			// https://github.com/WebAssembly/spec/blob/c8fd933fa51eb0b511bce027b573aef7ee373726/test/core/conversions.wast#L380-L398
 			op:         wasm.OpcodeMiscI64TruncSatF32U,
-			inputType:  wazeroir.Float32,
-			outputType: wazeroir.SignedUint64,
+			inputType:  f32,
+			outputType: signedUint64,
 			input32bit: []float32{
 				0.0, 0.0, 0x1p-149, -0x1p-149, 1.0, 0x1.19999ap+0, 1.5, 4294967296,
 				18446742974197923840.0, -0x1.ccccccp-1, -0x1.fffffep-1, 18446744073709551616.0, -1.0,
@@ -195,8 +142,8 @@ func TestInterpreter_NonTrappingFloatToIntConversion(t *testing.T) {
 		{
 			// https://github.com/WebAssembly/spec/blob/c8fd933fa51eb0b511bce027b573aef7ee373726/test/core/conversions.wast#L306-L327
 			op:         wasm.OpcodeMiscI32TruncSatF64S,
-			inputType:  wazeroir.Float64,
-			outputType: wazeroir.SignedInt32,
+			inputType:  f64,
+			outputType: signedInt32,
 			input64bit: []float64{
 				0.0, 0.0, 0x0.0000000000001p-1022, -0x0.0000000000001p-1022, 1.0, 0x1.199999999999ap+0, 1.5, -1.0,
 				-0x1.199999999999ap+0, -1.5, -1.9, -2.0, 2147483647.0, -2147483648.0, 2147483648.0,
@@ -211,8 +158,8 @@ func TestInterpreter_NonTrappingFloatToIntConversion(t *testing.T) {
 		{
 			// https://github.com/WebAssembly/spec/blob/c8fd933fa51eb0b511bce027b573aef7ee373726/test/core/conversions.wast#L329-L353
 			op:         wasm.OpcodeMiscI32TruncSatF64U,
-			inputType:  wazeroir.Float64,
-			outputType: wazeroir.SignedUint32,
+			inputType:  f64,
+			outputType: signedUint32,
 			input64bit: []float64{
 				0.0, 0.0, 0x0.0000000000001p-1022, -0x0.0000000000001p-1022, 1.0, 0x1.199999999999ap+0, 1.5, 1.9, 2.0,
 				2147483648, 4294967295.0, -0x1.ccccccccccccdp-1, -0x1.fffffffffffffp-1, 1e8, 4294967296.0, -1.0, 1e16, 1e30,
@@ -227,8 +174,8 @@ func TestInterpreter_NonTrappingFloatToIntConversion(t *testing.T) {
 		{
 			// https://github.com/WebAssembly/spec/blob/c8fd933fa51eb0b511bce027b573aef7ee373726/test/core/conversions.wast#L400-L423
 			op:         wasm.OpcodeMiscI64TruncSatF64S,
-			inputType:  wazeroir.Float64,
-			outputType: wazeroir.SignedInt64,
+			inputType:  f64,
+			outputType: signedInt64,
 			input64bit: []float64{
 				0.0, 0.0, 0x0.0000000000001p-1022, -0x0.0000000000001p-1022, 1.0, 0x1.199999999999ap+0, 1.5, -1.0,
 				-0x1.199999999999ap+0, -1.5, -1.9, -2.0, 4294967296, -4294967296, 9223372036854774784.0, -9223372036854775808.0,
@@ -244,8 +191,8 @@ func TestInterpreter_NonTrappingFloatToIntConversion(t *testing.T) {
 		{
 			// https://github.com/WebAssembly/spec/blob/c8fd933fa51eb0b511bce027b573aef7ee373726/test/core/conversions.wast#L425-L447
 			op:         wasm.OpcodeMiscI64TruncSatF64U,
-			inputType:  wazeroir.Float64,
-			outputType: wazeroir.SignedUint64,
+			inputType:  f64,
+			outputType: signedUint64,
 			input64bit: []float64{
 				0.0, 0.0, 0x0.0000000000001p-1022, -0x0.0000000000001p-1022, 1.0, 0x1.199999999999ap+0, 1.5, 4294967295, 4294967296,
 				18446744073709549568.0, -0x1.ccccccccccccdp-1, -0x1.fffffffffffffp-1, 1e8, 1e16, 9223372036854775808,
@@ -270,33 +217,37 @@ func TestInterpreter_NonTrappingFloatToIntConversion(t *testing.T) {
 			for i := 0; i < casenum; i++ {
 				i := i
 				t.Run(strconv.Itoa(i), func(t *testing.T) {
-					var body []*interpreterOp
+					var body []unionOperation
 					if in32bit {
-						body = append(body, &interpreterOp{kind: wazeroir.OperationKindConstF32,
-							us: []uint64{uint64(math.Float32bits(tc.input32bit[i]))}})
+						body = append(body, unionOperation{
+							Kind: operationKindConstF32,
+							U1:   uint64(math.Float32bits(tc.input32bit[i])),
+						})
 					} else {
-						body = append(body, &interpreterOp{kind: wazeroir.OperationKindConstF64,
-							us: []uint64{uint64(math.Float64bits(tc.input64bit[i]))}})
+						body = append(body, unionOperation{
+							Kind: operationKindConstF64,
+							U1:   math.Float64bits(tc.input64bit[i]),
+						})
 					}
 
-					body = append(body, &interpreterOp{
-						kind: wazeroir.OperationKindITruncFromF,
-						b1:   byte(tc.inputType),
-						b2:   byte(tc.outputType),
-						b3:   true, // NonTrapping = true.
+					body = append(body, unionOperation{
+						Kind: operationKindITruncFromF,
+						B1:   byte(tc.inputType),
+						B2:   byte(tc.outputType),
+						B3:   true, // NonTrapping = true.
 					})
 
 					// Return from function.
 					body = append(body,
-						&interpreterOp{kind: wazeroir.OperationKindBr, us: []uint64{math.MaxUint64}},
+						unionOperation{Kind: operationKindBr, U1: uint64(math.MaxUint64)},
 					)
 
 					ce := &callEngine{}
 					f := &function{
-						source: &wasm.FunctionInstance{Module: &wasm.ModuleInstance{Engine: &moduleEngine{}}},
-						body:   body,
+						moduleInstance: &wasm.ModuleInstance{Engine: &moduleEngine{}},
+						parent:         &compiledFunction{body: body},
 					}
-					ce.callNativeFunc(testCtx, &wasm.CallContext{}, f)
+					ce.callNativeFunc(testCtx, &wasm.ModuleInstance{}, f)
 
 					if len(tc.expected32bit) > 0 {
 						require.Equal(t, tc.expected32bit[i], int32(uint32(ce.popValue())))
@@ -311,18 +262,18 @@ func TestInterpreter_NonTrappingFloatToIntConversion(t *testing.T) {
 }
 
 func TestInterpreter_CallEngine_callNativeFunc_signExtend(t *testing.T) {
-	translateToIROperationKind := func(op wasm.Opcode) (kind wazeroir.OperationKind) {
+	translateToIRoperationKind := func(op wasm.Opcode) (kind operationKind) {
 		switch op {
 		case wasm.OpcodeI32Extend8S:
-			kind = wazeroir.OperationKindSignExtend32From8
+			kind = operationKindSignExtend32From8
 		case wasm.OpcodeI32Extend16S:
-			kind = wazeroir.OperationKindSignExtend32From16
+			kind = operationKindSignExtend32From16
 		case wasm.OpcodeI64Extend8S:
-			kind = wazeroir.OperationKindSignExtend64From8
+			kind = operationKindSignExtend64From8
 		case wasm.OpcodeI64Extend16S:
-			kind = wazeroir.OperationKindSignExtend64From16
+			kind = operationKindSignExtend64From16
 		case wasm.OpcodeI64Extend32S:
-			kind = wazeroir.OperationKindSignExtend64From32
+			kind = operationKindSignExtend64From32
 		}
 		return
 	}
@@ -356,14 +307,14 @@ func TestInterpreter_CallEngine_callNativeFunc_signExtend(t *testing.T) {
 			t.Run(fmt.Sprintf("%s(i32.const(0x%x))", wasm.InstructionName(tc.opcode), tc.in), func(t *testing.T) {
 				ce := &callEngine{}
 				f := &function{
-					source: &wasm.FunctionInstance{Module: &wasm.ModuleInstance{Engine: &moduleEngine{}}},
-					body: []*interpreterOp{
-						{kind: wazeroir.OperationKindConstI32, us: []uint64{uint64(uint32(tc.in))}},
-						{kind: translateToIROperationKind(tc.opcode)},
-						{kind: wazeroir.OperationKindBr, us: []uint64{math.MaxUint64}},
-					},
+					moduleInstance: &wasm.ModuleInstance{Engine: &moduleEngine{}},
+					parent: &compiledFunction{body: []unionOperation{
+						{Kind: operationKindConstI32, U1: uint64(uint32(tc.in))},
+						{Kind: translateToIRoperationKind(tc.opcode)},
+						{Kind: operationKindBr, U1: uint64(math.MaxUint64)},
+					}},
 				}
-				ce.callNativeFunc(testCtx, &wasm.CallContext{}, f)
+				ce.callNativeFunc(testCtx, &wasm.ModuleInstance{}, f)
 				require.Equal(t, tc.expected, int32(uint32(ce.popValue())))
 			})
 		}
@@ -410,14 +361,14 @@ func TestInterpreter_CallEngine_callNativeFunc_signExtend(t *testing.T) {
 			t.Run(fmt.Sprintf("%s(i64.const(0x%x))", wasm.InstructionName(tc.opcode), tc.in), func(t *testing.T) {
 				ce := &callEngine{}
 				f := &function{
-					source: &wasm.FunctionInstance{Module: &wasm.ModuleInstance{Engine: &moduleEngine{}}},
-					body: []*interpreterOp{
-						{kind: wazeroir.OperationKindConstI64, us: []uint64{uint64(tc.in)}},
-						{kind: translateToIROperationKind(tc.opcode)},
-						{kind: wazeroir.OperationKindBr, us: []uint64{math.MaxUint64}},
-					},
+					moduleInstance: &wasm.ModuleInstance{Engine: &moduleEngine{}},
+					parent: &compiledFunction{body: []unionOperation{
+						{Kind: operationKindConstI64, U1: uint64(tc.in)},
+						{Kind: translateToIRoperationKind(tc.opcode)},
+						{Kind: operationKindBr, U1: uint64(math.MaxUint64)},
+					}},
 				}
-				ce.callNativeFunc(testCtx, &wasm.CallContext{}, f)
+				ce.callNativeFunc(testCtx, &wasm.ModuleInstance{}, f)
 				require.Equal(t, tc.expected, int64(ce.popValue()))
 			})
 		}
@@ -426,23 +377,20 @@ func TestInterpreter_CallEngine_callNativeFunc_signExtend(t *testing.T) {
 
 func TestInterpreter_Compile(t *testing.T) {
 	t.Run("uncompiled", func(t *testing.T) {
-		e := et.NewEngine(wasm.Features20191205).(*engine)
-		_, err := e.NewModuleEngine("foo",
+		e := NewEngine(testCtx, api.CoreFeaturesV1, nil).(*engine)
+		_, err := e.NewModuleEngine(
 			&wasm.Module{},
-			nil, // imports
-			nil, // moduleFunctions
-			nil, // table
-			nil, // tableInit
+			nil, // functions
 		)
-		require.EqualError(t, err, "source module for foo must be compiled before instantiation")
+		require.EqualError(t, err, "source module must be compiled before instantiation")
 	})
 	t.Run("fail", func(t *testing.T) {
-		e := et.NewEngine(wasm.Features20191205).(*engine)
+		e := NewEngine(testCtx, api.CoreFeaturesV1, nil).(*engine)
 
 		errModule := &wasm.Module{
-			TypeSection:     []*wasm.FunctionType{{}},
+			TypeSection:     []wasm.FunctionType{{}},
 			FunctionSection: []wasm.Index{0, 0, 0},
-			CodeSection: []*wasm.Code{
+			CodeSection: []wasm.Code{
 				{Body: []byte{wasm.OpcodeEnd}},
 				{Body: []byte{wasm.OpcodeEnd}},
 				{Body: []byte{wasm.OpcodeCall}}, // Call instruction without immediate for call target index is invalid and should fail to compile.
@@ -450,20 +398,20 @@ func TestInterpreter_Compile(t *testing.T) {
 			ID: wasm.ModuleID{},
 		}
 
-		err := e.CompileModule(testCtx, errModule)
-		require.EqualError(t, err, "failed to lower func[2/2] to wazeroir: handling instruction: apply stack failed for call: reading immediates: EOF")
+		err := e.CompileModule(testCtx, errModule, nil, false)
+		require.EqualError(t, err, "handling instruction: apply stack failed for call: reading immediates: EOF")
 
 		// On the compilation failure, all the compiled functions including succeeded ones must be released.
-		_, ok := e.codes[errModule.ID]
+		_, ok := e.compiledFunctions[errModule.ID]
 		require.False(t, ok)
 	})
 	t.Run("ok", func(t *testing.T) {
-		e := et.NewEngine(wasm.Features20191205).(*engine)
+		e := NewEngine(testCtx, api.CoreFeaturesV1, nil).(*engine)
 
 		okModule := &wasm.Module{
-			TypeSection:     []*wasm.FunctionType{{}},
+			TypeSection:     []wasm.FunctionType{{}},
 			FunctionSection: []wasm.Index{0, 0, 0, 0},
-			CodeSection: []*wasm.Code{
+			CodeSection: []wasm.Code{
 				{Body: []byte{wasm.OpcodeEnd}},
 				{Body: []byte{wasm.OpcodeEnd}},
 				{Body: []byte{wasm.OpcodeEnd}},
@@ -471,36 +419,36 @@ func TestInterpreter_Compile(t *testing.T) {
 			},
 			ID: wasm.ModuleID{},
 		}
-		err := e.CompileModule(testCtx, okModule)
+		err := e.CompileModule(testCtx, okModule, nil, false)
 		require.NoError(t, err)
 
-		compiled, ok := e.codes[okModule.ID]
+		compiled, ok := e.compiledFunctions[okModule.ID]
 		require.True(t, ok)
 		require.Equal(t, len(okModule.FunctionSection), len(compiled))
 
-		_, ok = e.codes[okModule.ID]
+		_, ok = e.compiledFunctions[okModule.ID]
 		require.True(t, ok)
 	})
 }
 
-func TestEngine_CachedcodesPerModule(t *testing.T) {
-	e := et.NewEngine(wasm.Features20191205).(*engine)
-	exp := []*code{
-		{body: []*interpreterOp{}},
-		{body: []*interpreterOp{}},
+func TestEngine_CachedCompiledFunctionPerModule(t *testing.T) {
+	e := NewEngine(testCtx, api.CoreFeaturesV1, nil).(*engine)
+	exp := []compiledFunction{
+		{body: []unionOperation{}},
+		{body: []unionOperation{}},
 	}
 	m := &wasm.Module{}
 
-	e.addCodes(m, exp)
+	e.addCompiledFunctions(m, exp)
 
-	actual, ok := e.getCodes(m)
+	actual, ok := e.getCompiledFunctions(m)
 	require.True(t, ok)
 	require.Equal(t, len(exp), len(actual))
 	for i := range actual {
 		require.Equal(t, exp[i], actual[i])
 	}
 
-	e.deleteCodes(m)
-	_, ok = e.getCodes(m)
+	e.deleteCompiledFunctions(m)
+	_, ok = e.getCompiledFunctions(m)
 	require.False(t, ok)
 }

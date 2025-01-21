@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/internal/testing/binaryencoding"
 	"github.com/tetratelabs/wazero/internal/testing/require"
 	"github.com/tetratelabs/wazero/internal/wasm"
 )
@@ -13,7 +15,7 @@ func TestTableSection(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    []byte
-		expected []*wasm.Table
+		expected []wasm.Table
 	}{
 		{
 			name: "min and min with max",
@@ -21,7 +23,7 @@ func TestTableSection(t *testing.T) {
 				0x01,                            // 1 table
 				wasm.RefTypeFuncref, 0x01, 2, 3, // (table 2 3)
 			},
-			expected: []*wasm.Table{{Min: 2, Max: &three, Type: wasm.RefTypeFuncref}},
+			expected: []wasm.Table{{Min: 2, Max: &three, Type: wasm.RefTypeFuncref}},
 		},
 		{
 			name: "min and min with max - three tables",
@@ -31,7 +33,7 @@ func TestTableSection(t *testing.T) {
 				wasm.RefTypeExternref, 0x01, 2, 3, // (table 2 3)
 				wasm.RefTypeFuncref, 0x01, 2, 3, // (table 2 3)
 			},
-			expected: []*wasm.Table{
+			expected: []wasm.Table{
 				{Min: 2, Max: &three, Type: wasm.RefTypeFuncref},
 				{Min: 2, Max: &three, Type: wasm.RefTypeExternref},
 				{Min: 2, Max: &three, Type: wasm.RefTypeFuncref},
@@ -43,7 +45,7 @@ func TestTableSection(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			tables, err := decodeTableSection(bytes.NewReader(tc.input), wasm.FeatureReferenceTypes)
+			tables, err := decodeTableSection(bytes.NewReader(tc.input), api.CoreFeatureReferenceTypes)
 			require.NoError(t, err)
 			require.Equal(t, tc.expected, tables)
 		})
@@ -55,7 +57,7 @@ func TestTableSection_Errors(t *testing.T) {
 		name        string
 		input       []byte
 		expectedErr string
-		features    wasm.Features
+		features    api.CoreFeatures
 	}{
 		{
 			name: "min and min with max",
@@ -65,7 +67,7 @@ func TestTableSection_Errors(t *testing.T) {
 				wasm.RefTypeFuncref, 0x01, 0x02, 0x03, // (table 2 3)
 			},
 			expectedErr: "at most one table allowed in module as feature \"reference-types\" is disabled",
-			features:    wasm.Features20191205,
+			features:    api.CoreFeaturesV1,
 		},
 	}
 
@@ -80,6 +82,8 @@ func TestTableSection_Errors(t *testing.T) {
 }
 
 func TestMemorySection(t *testing.T) {
+	max := wasm.MemoryLimitPages
+
 	three := uint32(3)
 	tests := []struct {
 		name     string
@@ -100,7 +104,7 @@ func TestMemorySection(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			memories, err := decodeMemorySection(bytes.NewReader(tc.input), wasm.MemorySizer)
+			memories, err := decodeMemorySection(bytes.NewReader(tc.input), api.CoreFeaturesV2, newMemorySizer(max, false), max)
 			require.NoError(t, err)
 			require.Equal(t, tc.expected, memories)
 		})
@@ -108,6 +112,8 @@ func TestMemorySection(t *testing.T) {
 }
 
 func TestMemorySection_Errors(t *testing.T) {
+	max := wasm.MemoryLimitPages
+
 	tests := []struct {
 		name        string
 		input       []byte
@@ -128,7 +134,7 @@ func TestMemorySection_Errors(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := decodeMemorySection(bytes.NewReader(tc.input), wasm.MemorySizer)
+			_, err := decodeMemorySection(bytes.NewReader(tc.input), api.CoreFeaturesV2, newMemorySizer(max, false), max)
 			require.EqualError(t, err, tc.expectedErr)
 		})
 	}
@@ -138,7 +144,7 @@ func TestDecodeExportSection(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    []byte
-		expected []*wasm.Export
+		expected []wasm.Export
 	}{
 		{
 			name: "empty and non-empty name",
@@ -149,7 +155,7 @@ func TestDecodeExportSection(t *testing.T) {
 				0x01, 'a', // Size of name, name
 				wasm.ExternTypeFunc, 0x01, // func[1]
 			},
-			expected: []*wasm.Export{
+			expected: []wasm.Export{
 				{Name: "", Type: wasm.ExternTypeFunc, Index: wasm.Index(2)},
 				{Name: "a", Type: wasm.ExternTypeFunc, Index: wasm.Index(1)},
 			},
@@ -160,9 +166,16 @@ func TestDecodeExportSection(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			exports, err := decodeExportSection(bytes.NewReader(tc.input))
+			actual, actualExpMap, err := decodeExportSection(bytes.NewReader(tc.input))
 			require.NoError(t, err)
-			require.Equal(t, tc.expected, exports)
+			require.Equal(t, tc.expected, actual)
+
+			expMap := make(map[string]*wasm.Export, len(tc.expected))
+			for i := range tc.expected {
+				exp := &tc.expected[i]
+				expMap[exp.Name] = exp
+			}
+			require.Equal(t, expMap, actualExpMap)
 		})
 	}
 }
@@ -201,19 +214,19 @@ func TestDecodeExportSection_Errors(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := decodeExportSection(bytes.NewReader(tc.input))
+			_, _, err := decodeExportSection(bytes.NewReader(tc.input))
 			require.EqualError(t, err, tc.expectedErr)
 		})
 	}
 }
 
 func TestEncodeFunctionSection(t *testing.T) {
-	require.Equal(t, []byte{wasm.SectionIDFunction, 0x2, 0x01, 0x05}, encodeFunctionSection([]wasm.Index{5}))
+	require.Equal(t, []byte{wasm.SectionIDFunction, 0x2, 0x01, 0x05}, binaryencoding.EncodeFunctionSection([]wasm.Index{5}))
 }
 
 // TestEncodeStartSection uses the same index as TestEncodeFunctionSection to highlight the encoding is different.
 func TestEncodeStartSection(t *testing.T) {
-	require.Equal(t, []byte{wasm.SectionIDStart, 0x01, 0x05}, encodeStartSection(5))
+	require.Equal(t, []byte{wasm.SectionIDStart, 0x01, 0x05}, binaryencoding.EncodeStartSection(5))
 }
 
 func TestDecodeDataCountSection(t *testing.T) {

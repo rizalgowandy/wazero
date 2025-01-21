@@ -3,6 +3,7 @@ package binary
 import (
 	"testing"
 
+	"github.com/tetratelabs/wazero/internal/testing/binaryencoding"
 	"github.com/tetratelabs/wazero/internal/testing/require"
 	"github.com/tetratelabs/wazero/internal/wasm"
 )
@@ -19,7 +20,7 @@ func TestEncodeImport(t *testing.T) {
 	}{
 		{
 			name: "func no module, no name, type index 0",
-			input: &wasm.Import{ // Ex. (import "" "" (func (type 0)))
+			input: &wasm.Import{ // e.g. (import "" "" (func (type 0)))
 				Type:     wasm.ExternTypeFunc,
 				Module:   "",
 				Name:     "",
@@ -29,7 +30,7 @@ func TestEncodeImport(t *testing.T) {
 		},
 		{
 			name: "func module, no name, type index 0",
-			input: &wasm.Import{ // Ex. (import "$test" "" (func (type 0)))
+			input: &wasm.Import{ // e.g. (import "$test" "" (func (type 0)))
 				Type:     wasm.ExternTypeFunc,
 				Module:   "test",
 				Name:     "",
@@ -44,7 +45,7 @@ func TestEncodeImport(t *testing.T) {
 		},
 		{
 			name: "func module, name, type index 0",
-			input: &wasm.Import{ // Ex. (import "$math" "$pi" (func (type 0)))
+			input: &wasm.Import{ // e.g. (import "$math" "$pi" (func (type 0)))
 				Type:     wasm.ExternTypeFunc,
 				Module:   "math",
 				Name:     "pi",
@@ -59,7 +60,7 @@ func TestEncodeImport(t *testing.T) {
 		},
 		{
 			name: "func module, name, type index 10",
-			input: &wasm.Import{ // Ex. (import "$math" "$pi" (func (type 10)))
+			input: &wasm.Import{ // e.g. (import "$math" "$pi" (func (type 10)))
 				Type:     wasm.ExternTypeFunc,
 				Module:   "math",
 				Name:     "pi",
@@ -78,7 +79,7 @@ func TestEncodeImport(t *testing.T) {
 				Type:       wasm.ExternTypeGlobal,
 				Module:     "math",
 				Name:       "pi",
-				DescGlobal: &wasm.GlobalType{ValType: wasm.ValueTypeF64},
+				DescGlobal: wasm.GlobalType{ValType: wasm.ValueTypeF64},
 			},
 			expected: []byte{
 				0x04, 'm', 'a', 't', 'h',
@@ -93,7 +94,7 @@ func TestEncodeImport(t *testing.T) {
 				Type:       wasm.ExternTypeGlobal,
 				Module:     "math",
 				Name:       "pi",
-				DescGlobal: &wasm.GlobalType{ValType: wasm.ValueTypeF64, Mutable: true},
+				DescGlobal: wasm.GlobalType{ValType: wasm.ValueTypeF64, Mutable: true},
 			},
 			expected: []byte{
 				0x04, 'm', 'a', 't', 'h',
@@ -108,7 +109,7 @@ func TestEncodeImport(t *testing.T) {
 				Type:      wasm.ExternTypeTable,
 				Module:    "my",
 				Name:      "table",
-				DescTable: &wasm.Table{Min: 1, Max: ptrOfUint32(2)},
+				DescTable: wasm.Table{Min: 1, Max: ptrOfUint32(2)},
 			},
 			expected: []byte{
 				0x02, 'm', 'y',
@@ -154,7 +155,7 @@ func TestEncodeImport(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			bytes := encodeImport(tc.input)
+			bytes := binaryencoding.EncodeImport(tc.input)
 			require.Equal(t, tc.expected, bytes)
 		})
 	}

@@ -1,44 +1,24 @@
-package spectest
+package v2
 
 import (
-	"embed"
-	"path"
-	"runtime"
-	"strings"
+	"context"
 	"testing"
 
-	"github.com/tetratelabs/wazero/internal/engine/compiler"
-	"github.com/tetratelabs/wazero/internal/engine/interpreter"
+	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/internal/integration_test/spectest"
-	"github.com/tetratelabs/wazero/internal/wasm"
+	"github.com/tetratelabs/wazero/internal/platform"
 )
 
-//go:embed testdata/*.wasm
-//go:embed testdata/*.json
-var testcases embed.FS //nolint:unused
-
-const enabledFeatures = wasm.Features20220419
+const enabledFeatures = api.CoreFeaturesV2
 
 func TestCompiler(t *testing.T) {
-	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+	if !platform.CompilerSupported() {
 		t.Skip()
 	}
-
-	spectest.Run(t, testcases, compiler.NewEngine, enabledFeatures, func(jsonname string) bool {
-		// TODO: remove after SIMD proposal
-		if strings.Contains(jsonname, "simd") {
-			return path.Base(jsonname) == "simd_const.json"
-		}
-		return true
-	})
+	spectest.Run(t, Testcases, context.Background(), wazero.NewRuntimeConfigCompiler().WithCoreFeatures(enabledFeatures))
 }
 
 func TestInterpreter(t *testing.T) {
-	spectest.Run(t, testcases, interpreter.NewEngine, enabledFeatures, func(jsonname string) bool {
-		// TODO: remove after SIMD proposal
-		if strings.Contains(jsonname, "simd") {
-			return path.Base(jsonname) == "simd_const.json"
-		}
-		return true
-	})
+	spectest.Run(t, Testcases, context.Background(), wazero.NewRuntimeConfigInterpreter().WithCoreFeatures(enabledFeatures))
 }

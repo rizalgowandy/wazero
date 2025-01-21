@@ -1,10 +1,15 @@
 package wasm
 
 import (
-	"context"
 	"math"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
+	"unsafe"
 
+	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 	"github.com/tetratelabs/wazero/internal/testing/require"
 )
 
@@ -14,28 +19,13 @@ func TestMemoryPageConsts(t *testing.T) {
 	require.Equal(t, MemoryLimitPages, uint32(1<<16))
 }
 
-func TestMemoryPages(t *testing.T) {
-	t.Run("cap=min, nil max", func(t *testing.T) {
-		min, capacity, max := MemorySizer(1, nil)
-		require.Equal(t, uint32(1), min)
-		require.Equal(t, uint32(1), capacity)
-		require.Equal(t, MemoryLimitPages, max)
-	})
-	t.Run("cap=min, max", func(t *testing.T) {
-		min, capacity, max := MemorySizer(1, uint32Ptr(2))
-		require.Equal(t, uint32(1), min)
-		require.Equal(t, uint32(1), capacity)
-		require.Equal(t, uint32(2), max)
-	})
-}
-
-func Test_MemoryPagesToBytesNum(t *testing.T) {
+func TestMemoryPagesToBytesNum(t *testing.T) {
 	for _, numPage := range []uint32{0, 1, 5, 10} {
 		require.Equal(t, uint64(numPage*MemoryPageSize), MemoryPagesToBytesNum(numPage))
 	}
 }
 
-func Test_MemoryBytesNumToPages(t *testing.T) {
+func TestMemoryBytesNumToPages(t *testing.T) {
 	for _, numbytes := range []uint32{0, MemoryPageSize * 1, MemoryPageSize * 10} {
 		require.Equal(t, numbytes/MemoryPageSize, memoryBytesNumToPages(uint64(numbytes)))
 	}
@@ -43,59 +33,77 @@ func Test_MemoryBytesNumToPages(t *testing.T) {
 
 func TestMemoryInstance_Grow_Size(t *testing.T) {
 	tests := []struct {
-		name         string
-		ctx          context.Context
-		capEqualsMax bool
+		name          string
+		capEqualsMax  bool
+		expAllocator  bool
+		failAllocator bool
 	}{
-		{name: "nil context"},
-		{name: "context", ctx: testCtx},
-		{name: "nil context, capEqualsMax", capEqualsMax: true},
-		{name: "context,  capEqualsMax", ctx: testCtx, capEqualsMax: true},
+		{name: ""},
+		{name: "capEqualsMax", capEqualsMax: true},
+		{name: "expAllocator", expAllocator: true},
+		{name: "failAllocator", failAllocator: true},
 	}
 
 	for _, tt := range tests {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := tc.ctx
 			max := uint32(10)
 			maxBytes := MemoryPagesToBytesNum(max)
+			me := &mockModuleEngine{}
 			var m *MemoryInstance
-			if tc.capEqualsMax {
-				m = &MemoryInstance{Cap: max, Max: max, Buffer: make([]byte, 0, maxBytes)}
-			} else {
+			switch {
+			default:
 				m = &MemoryInstance{Max: max, Buffer: make([]byte, 0)}
+			case tc.capEqualsMax:
+				m = &MemoryInstance{Cap: max, Max: max, Buffer: make([]byte, 0, maxBytes)}
+			case tc.expAllocator:
+				expBuffer := sliceAllocator(0, maxBytes)
+				m = &MemoryInstance{Max: max, Buffer: expBuffer.Reallocate(0), expBuffer: expBuffer}
+			case tc.failAllocator:
+				expBuffer := sliceAllocator(0, maxBytes)
+				m = &MemoryInstance{Max: max * 2, Buffer: expBuffer.Reallocate(0), expBuffer: expBuffer}
 			}
+			m.ownerModuleEngine = me
 
-			res, ok := m.Grow(ctx, 5)
+			res, ok := m.Grow(5)
 			require.True(t, ok)
 			require.Equal(t, uint32(0), res)
-			require.Equal(t, uint32(5), m.PageSize(ctx))
+			require.Equal(t, uint32(5), m.Pages())
 
 			// Zero page grow is well-defined, should return the current page correctly.
-			res, ok = m.Grow(ctx, 0)
+			res, ok = m.Grow(0)
 			require.True(t, ok)
 			require.Equal(t, uint32(5), res)
-			require.Equal(t, uint32(5), m.PageSize(ctx))
+			require.Equal(t, uint32(5), m.Pages())
 
-			res, ok = m.Grow(ctx, 4)
+			res, ok = m.Grow(4)
 			require.True(t, ok)
 			require.Equal(t, uint32(5), res)
-			require.Equal(t, uint32(9), m.PageSize(ctx))
+			require.Equal(t, uint32(9), m.Pages())
+
+			res, ok = m.Grow(0)
+			require.True(t, ok)
+			require.Equal(t, uint32(9), res)
+			require.Equal(t, uint32(9), m.Pages())
 
 			// At this point, the page size equal 9,
 			// so trying to grow two pages should result in failure.
-			_, ok = m.Grow(ctx, 2)
+			_, ok = m.Grow(2)
 			require.False(t, ok)
-			require.Equal(t, uint32(9), m.PageSize(ctx))
+			require.Equal(t, uint32(9), m.Pages())
 
 			// But growing one page is still permitted.
-			res, ok = m.Grow(ctx, 1)
+			res, ok = m.Grow(1)
 			require.True(t, ok)
 			require.Equal(t, uint32(9), res)
 
 			// Ensure that the current page size equals the max.
-			require.Equal(t, max, m.PageSize(ctx))
+			require.Equal(t, max, m.Pages())
+
+			// Growing zero and beyond max won't notify the module engine.
+			// So in total, the memoryGrown should be called 3 times.
+			require.Equal(t, 3, me.memoryGrown)
 
 			if tc.capEqualsMax { // Ensure the capacity isn't more than max.
 				require.Equal(t, maxBytes, uint64(cap(m.Buffer)))
@@ -106,59 +114,27 @@ func TestMemoryInstance_Grow_Size(t *testing.T) {
 	}
 }
 
-func TestIndexByte(t *testing.T) {
-	for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-		var mem = &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 16, 0, 0, 0}, Min: 1}
-		v, ok := mem.IndexByte(ctx, 4, 16)
-		require.True(t, ok)
-		require.Equal(t, uint32(4), v)
-
-		_, ok = mem.IndexByte(ctx, 5, 16)
-		require.False(t, ok)
-
-		_, ok = mem.IndexByte(ctx, 9, 16)
-		require.False(t, ok)
-	}
+func TestMemoryInstance_NegativeDelta(t *testing.T) {
+	m := &MemoryInstance{Buffer: make([]byte, 2*MemoryPageSize)}
+	_negative := -1
+	negativeu32 := uint32(_negative)
+	_, ok := m.Grow(negativeu32)
+	// If the negative page size is given, current_page+delta might overflow, and it can result in accidentally shrinking the memory,
+	// which is obviously not spec compliant.
+	require.False(t, ok)
 }
 
-func TestReadByte(t *testing.T) {
-	for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-		var mem = &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 0, 0, 0, 16}, Min: 1}
-		v, ok := mem.ReadByte(ctx, 7)
-		require.True(t, ok)
-		require.Equal(t, byte(16), v)
+func TestMemoryInstance_ReadByte(t *testing.T) {
+	mem := &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 0, 0, 0, 16}, Min: 1}
+	v, ok := mem.ReadByte(7)
+	require.True(t, ok)
+	require.Equal(t, byte(16), v)
 
-		_, ok = mem.ReadByte(ctx, 8)
-		require.False(t, ok)
+	_, ok = mem.ReadByte(8)
+	require.False(t, ok)
 
-		_, ok = mem.ReadByte(ctx, 9)
-		require.False(t, ok)
-	}
-}
-
-func TestReadUint32Le(t *testing.T) {
-	for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-		var mem = &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 16, 0, 0, 0}, Min: 1}
-		v, ok := mem.ReadUint32Le(ctx, 4)
-		require.True(t, ok)
-		require.Equal(t, uint32(16), v)
-
-		_, ok = mem.ReadUint32Le(ctx, 5)
-		require.False(t, ok)
-
-		_, ok = mem.ReadUint32Le(ctx, 9)
-		require.False(t, ok)
-	}
-}
-
-func TestWriteUint32Le(t *testing.T) {
-	for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-		var mem = &MemoryInstance{Buffer: make([]byte, 8), Min: 1}
-		require.True(t, mem.WriteUint32Le(ctx, 4, 16))
-		require.Equal(t, []byte{0, 0, 0, 0, 16, 0, 0, 0}, mem.Buffer)
-		require.False(t, mem.WriteUint32Le(ctx, 5, 16))
-		require.False(t, mem.WriteUint32Le(ctx, 9, 16))
-	}
+	_, ok = mem.ReadByte(9)
+	require.False(t, ok)
 }
 
 func TestPagesToUnitOfBytes(t *testing.T) {
@@ -220,19 +196,19 @@ func TestMemoryInstance_HasSize(t *testing.T) {
 		},
 		{
 			name:        "maximum valid sizeInBytes",
-			offset:      memory.Size(testCtx) - 8,
+			offset:      memory.Size() - 8,
 			sizeInBytes: 8,
 			expected:    true,
 		},
 		{
 			name:        "sizeInBytes exceeds the valid size by 1",
 			offset:      100, // arbitrary valid offset
-			sizeInBytes: uint64(memory.Size(testCtx) - 99),
+			sizeInBytes: uint64(memory.Size() - 99),
 			expected:    false,
 		},
 		{
 			name:        "offset exceeds the memory size",
-			offset:      memory.Size(testCtx),
+			offset:      memory.Size(),
 			sizeInBytes: 1, // arbitrary size
 			expected:    false,
 		},
@@ -254,7 +230,7 @@ func TestMemoryInstance_HasSize(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.expected, memory.hasSize(tc.offset, uint32(tc.sizeInBytes)))
+			require.Equal(t, tc.expected, memory.hasSize(tc.offset, tc.sizeInBytes))
 		})
 	}
 }
@@ -299,13 +275,11 @@ func TestMemoryInstance_ReadUint16Le(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-				memory := &MemoryInstance{Buffer: tc.memory}
+			memory := &MemoryInstance{Buffer: tc.memory}
 
-				v, ok := memory.ReadUint16Le(ctx, tc.offset)
-				require.Equal(t, tc.expectedOk, ok)
-				require.Equal(t, tc.expected, v)
-			}
+			v, ok := memory.ReadUint16Le(tc.offset)
+			require.Equal(t, tc.expectedOk, ok)
+			require.Equal(t, tc.expected, v)
 		})
 	}
 }
@@ -350,13 +324,11 @@ func TestMemoryInstance_ReadUint32Le(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-				memory := &MemoryInstance{Buffer: tc.memory}
+			memory := &MemoryInstance{Buffer: tc.memory}
 
-				v, ok := memory.ReadUint32Le(ctx, tc.offset)
-				require.Equal(t, tc.expectedOk, ok)
-				require.Equal(t, tc.expected, v)
-			}
+			v, ok := memory.ReadUint32Le(tc.offset)
+			require.Equal(t, tc.expectedOk, ok)
+			require.Equal(t, tc.expected, v)
 		})
 	}
 }
@@ -401,13 +373,11 @@ func TestMemoryInstance_ReadUint64Le(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-				memory := &MemoryInstance{Buffer: tc.memory}
+			memory := &MemoryInstance{Buffer: tc.memory}
 
-				v, ok := memory.ReadUint64Le(ctx, tc.offset)
-				require.Equal(t, tc.expectedOk, ok)
-				require.Equal(t, tc.expected, v)
-			}
+			v, ok := memory.ReadUint64Le(tc.offset)
+			require.Equal(t, tc.expectedOk, ok)
+			require.Equal(t, tc.expected, v)
 		})
 	}
 }
@@ -452,13 +422,11 @@ func TestMemoryInstance_ReadFloat32Le(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-				memory := &MemoryInstance{Buffer: tc.memory}
+			memory := &MemoryInstance{Buffer: tc.memory}
 
-				v, ok := memory.ReadFloat32Le(ctx, tc.offset)
-				require.Equal(t, tc.expectedOk, ok)
-				require.Equal(t, tc.expected, v)
-			}
+			v, ok := memory.ReadFloat32Le(tc.offset)
+			require.Equal(t, tc.expectedOk, ok)
+			require.Equal(t, tc.expected, v)
 		})
 	}
 }
@@ -503,15 +471,32 @@ func TestMemoryInstance_ReadFloat64Le(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-				memory := &MemoryInstance{Buffer: tc.memory}
+			memory := &MemoryInstance{Buffer: tc.memory}
 
-				v, ok := memory.ReadFloat64Le(ctx, tc.offset)
-				require.Equal(t, tc.expectedOk, ok)
-				require.Equal(t, tc.expected, v)
-			}
+			v, ok := memory.ReadFloat64Le(tc.offset)
+			require.Equal(t, tc.expectedOk, ok)
+			require.Equal(t, tc.expected, v)
 		})
 	}
+}
+
+func TestMemoryInstance_Read(t *testing.T) {
+	mem := &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 16, 0, 0, 0}, Min: 1}
+
+	buf, ok := mem.Read(4, 4)
+	require.True(t, ok)
+	require.Equal(t, []byte{16, 0, 0, 0}, buf)
+
+	// Test write-through
+	buf[3] = 4
+	require.Equal(t, []byte{16, 0, 0, 4}, buf)
+	require.Equal(t, []byte{0, 0, 0, 0, 16, 0, 0, 4}, mem.Buffer)
+
+	_, ok = mem.Read(5, 4)
+	require.False(t, ok)
+
+	_, ok = mem.Read(9, 4)
+	require.False(t, ok)
 }
 
 func TestMemoryInstance_WriteUint16Le(t *testing.T) {
@@ -540,15 +525,15 @@ func TestMemoryInstance_WriteUint16Le(t *testing.T) {
 		},
 		{
 			name:          "maximum boundary valid offset",
-			offset:        memory.Size(testCtx) - 2, // 2 is the size of uint16
-			v:             1,                        // arbitrary valid v
+			offset:        memory.Size() - 2, // 2 is the size of uint16
+			v:             1,                 // arbitrary valid v
 			expectedOk:    true,
 			expectedBytes: []byte{0x1, 0x00},
 		},
 		{
 			name:          "offset exceeds the maximum valid offset by 1",
-			offset:        memory.Size(testCtx) - 2 + 1, // 2 is the size of uint16
-			v:             1,                            // arbitrary valid v
+			offset:        memory.Size() - 2 + 1, // 2 is the size of uint16
+			v:             1,                     // arbitrary valid v
 			expectedBytes: []byte{0xff, 0xff},
 		},
 	}
@@ -557,11 +542,9 @@ func TestMemoryInstance_WriteUint16Le(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-				require.Equal(t, tc.expectedOk, memory.WriteUint16Le(ctx, tc.offset, tc.v))
-				if tc.expectedOk {
-					require.Equal(t, tc.expectedBytes, memory.Buffer[tc.offset:tc.offset+2]) // 2 is the size of uint16
-				}
+			require.Equal(t, tc.expectedOk, memory.WriteUint16Le(tc.offset, tc.v))
+			if tc.expectedOk {
+				require.Equal(t, tc.expectedBytes, memory.Buffer[tc.offset:tc.offset+2]) // 2 is the size of uint16
 			}
 		})
 	}
@@ -593,15 +576,15 @@ func TestMemoryInstance_WriteUint32Le(t *testing.T) {
 		},
 		{
 			name:          "maximum boundary valid offset",
-			offset:        memory.Size(testCtx) - 4, // 4 is the size of uint32
-			v:             1,                        // arbitrary valid v
+			offset:        memory.Size() - 4, // 4 is the size of uint32
+			v:             1,                 // arbitrary valid v
 			expectedOk:    true,
 			expectedBytes: []byte{0x1, 0x00, 0x00, 0x00},
 		},
 		{
 			name:          "offset exceeds the maximum valid offset by 1",
-			offset:        memory.Size(testCtx) - 4 + 1, // 4 is the size of uint32
-			v:             1,                            // arbitrary valid v
+			offset:        memory.Size() - 4 + 1, // 4 is the size of uint32
+			v:             1,                     // arbitrary valid v
 			expectedBytes: []byte{0xff, 0xff, 0xff, 0xff},
 		},
 	}
@@ -610,11 +593,9 @@ func TestMemoryInstance_WriteUint32Le(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-				require.Equal(t, tc.expectedOk, memory.WriteUint32Le(ctx, tc.offset, tc.v))
-				if tc.expectedOk {
-					require.Equal(t, tc.expectedBytes, memory.Buffer[tc.offset:tc.offset+4]) // 4 is the size of uint32
-				}
+			require.Equal(t, tc.expectedOk, memory.WriteUint32Le(tc.offset, tc.v))
+			if tc.expectedOk {
+				require.Equal(t, tc.expectedBytes, memory.Buffer[tc.offset:tc.offset+4]) // 4 is the size of uint32
 			}
 		})
 	}
@@ -645,15 +626,15 @@ func TestMemoryInstance_WriteUint64Le(t *testing.T) {
 		},
 		{
 			name:          "maximum boundary valid offset",
-			offset:        memory.Size(testCtx) - 8, // 8 is the size of uint64
-			v:             1,                        // arbitrary valid v
+			offset:        memory.Size() - 8, // 8 is the size of uint64
+			v:             1,                 // arbitrary valid v
 			expectedOk:    true,
 			expectedBytes: []byte{0x1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
 		},
 		{
 			name:       "offset exceeds the maximum valid offset by 1",
-			offset:     memory.Size(testCtx) - 8 + 1, // 8 is the size of uint64
-			v:          1,                            // arbitrary valid v
+			offset:     memory.Size() - 8 + 1, // 8 is the size of uint64
+			v:          1,                     // arbitrary valid v
 			expectedOk: false,
 		},
 	}
@@ -662,11 +643,9 @@ func TestMemoryInstance_WriteUint64Le(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-				require.Equal(t, tc.expectedOk, memory.WriteUint64Le(ctx, tc.offset, tc.v))
-				if tc.expectedOk {
-					require.Equal(t, tc.expectedBytes, memory.Buffer[tc.offset:tc.offset+8]) // 8 is the size of uint64
-				}
+			require.Equal(t, tc.expectedOk, memory.WriteUint64Le(tc.offset, tc.v))
+			if tc.expectedOk {
+				require.Equal(t, tc.expectedBytes, memory.Buffer[tc.offset:tc.offset+8]) // 8 is the size of uint64
 			}
 		})
 	}
@@ -698,15 +677,15 @@ func TestMemoryInstance_WriteFloat32Le(t *testing.T) {
 		},
 		{
 			name:          "maximum boundary valid offset",
-			offset:        memory.Size(testCtx) - 4, // 4 is the size of float32
-			v:             0.1,                      // arbitrary valid v
+			offset:        memory.Size() - 4, // 4 is the size of float32
+			v:             0.1,               // arbitrary valid v
 			expectedOk:    true,
 			expectedBytes: []byte{0xcd, 0xcc, 0xcc, 0x3d},
 		},
 		{
 			name:          "offset exceeds the maximum valid offset by 1",
-			offset:        memory.Size(testCtx) - 4 + 1, // 4 is the size of float32
-			v:             math.MaxFloat32,              // arbitrary valid v
+			offset:        memory.Size() - 4 + 1, // 4 is the size of float32
+			v:             math.MaxFloat32,       // arbitrary valid v
 			expectedBytes: []byte{0xff, 0xff, 0xff, 0xff},
 		},
 	}
@@ -715,11 +694,9 @@ func TestMemoryInstance_WriteFloat32Le(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-				require.Equal(t, tc.expectedOk, memory.WriteFloat32Le(ctx, tc.offset, tc.v))
-				if tc.expectedOk {
-					require.Equal(t, tc.expectedBytes, memory.Buffer[tc.offset:tc.offset+4]) // 4 is the size of float32
-				}
+			require.Equal(t, tc.expectedOk, memory.WriteFloat32Le(tc.offset, tc.v))
+			if tc.expectedOk {
+				require.Equal(t, tc.expectedBytes, memory.Buffer[tc.offset:tc.offset+4]) // 4 is the size of float32
 			}
 		})
 	}
@@ -750,15 +727,15 @@ func TestMemoryInstance_WriteFloat64Le(t *testing.T) {
 		},
 		{
 			name:          "maximum boundary valid offset",
-			offset:        memory.Size(testCtx) - 8, // 8 is the size of float64
-			v:             math.MaxFloat64,          // arbitrary valid v
+			offset:        memory.Size() - 8, // 8 is the size of float64
+			v:             math.MaxFloat64,   // arbitrary valid v
 			expectedOk:    true,
 			expectedBytes: []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xef, 0x7f},
 		},
 		{
 			name:       "offset exceeds the maximum valid offset by 1",
-			offset:     memory.Size(testCtx) - 8 + 1, // 8 is the size of float64
-			v:          math.MaxFloat64,              // arbitrary valid v
+			offset:     memory.Size() - 8 + 1, // 8 is the size of float64
+			v:          math.MaxFloat64,       // arbitrary valid v
 			expectedOk: false,
 		},
 	}
@@ -767,12 +744,297 @@ func TestMemoryInstance_WriteFloat64Le(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			for _, ctx := range []context.Context{nil, testCtx} { // Ensure it doesn't crash on nil!
-				require.Equal(t, tc.expectedOk, memory.WriteFloat64Le(ctx, tc.offset, tc.v))
-				if tc.expectedOk {
-					require.Equal(t, tc.expectedBytes, memory.Buffer[tc.offset:tc.offset+8]) // 8 is the size of float64
-				}
+			require.Equal(t, tc.expectedOk, memory.WriteFloat64Le(tc.offset, tc.v))
+			if tc.expectedOk {
+				require.Equal(t, tc.expectedBytes, memory.Buffer[tc.offset:tc.offset+8]) // 8 is the size of float64
 			}
 		})
 	}
+}
+
+func TestMemoryInstance_Write(t *testing.T) {
+	mem := &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 16, 0, 0, 0}, Min: 1}
+
+	buf := []byte{16, 0, 0, 4}
+	require.True(t, mem.Write(4, buf))
+	require.Equal(t, []byte{0, 0, 0, 0, 16, 0, 0, 4}, mem.Buffer)
+
+	// Test it isn't write-through
+	buf[3] = 0
+	require.Equal(t, []byte{16, 0, 0, 0}, buf)
+	require.Equal(t, []byte{0, 0, 0, 0, 16, 0, 0, 4}, mem.Buffer)
+
+	ok := mem.Write(5, buf)
+	require.False(t, ok)
+
+	ok = mem.Write(9, buf)
+	require.False(t, ok)
+}
+
+func TestMemoryInstance_Write_overflow(t *testing.T) {
+	mem := &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 16, 0, 0, 0}, Min: 1}
+
+	// Test overflow
+	huge := uint64(math.MaxUint32 + 1 + 4)
+	if huge != uint64(int(huge)) {
+		t.Skip("Skipping on 32-bit")
+	}
+
+	buf := []byte{16, 0, 0, 4}
+	//nolint:staticcheck
+	header := (*reflect.SliceHeader)(unsafe.Pointer(&buf))
+	header.Len = int(huge)
+	header.Cap = int(huge)
+
+	require.False(t, mem.Write(4, buf))
+}
+
+func TestMemoryInstance_WriteString(t *testing.T) {
+	mem := &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 16, 0, 0, 0}, Min: 1}
+
+	s := "bear"
+	require.True(t, mem.WriteString(4, s))
+	require.Equal(t, []byte{0, 0, 0, 0, 'b', 'e', 'a', 'r'}, mem.Buffer)
+
+	ok := mem.WriteString(5, s)
+	require.False(t, ok)
+
+	ok = mem.WriteString(9, s)
+	require.False(t, ok)
+}
+
+func BenchmarkWriteString(b *testing.B) {
+	tests := []string{
+		"",
+		"bear",
+		"hello world",
+		strings.Repeat("hello ", 10),
+	}
+	//nolint intentionally testing interface access
+	var mem api.Memory
+	mem = &MemoryInstance{Buffer: make([]byte, 1000), Min: 1}
+	for _, tt := range tests {
+		b.Run("", func(b *testing.B) {
+			b.Run("Write", func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					if !mem.Write(0, []byte(tt)) {
+						b.Fail()
+					}
+				}
+			})
+			b.Run("WriteString", func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					if !mem.WriteString(0, tt) {
+						b.Fail()
+					}
+				}
+			})
+		})
+	}
+}
+
+func Test_atomicStoreLength(t *testing.T) {
+	// Doesn't verify atomicity, but at least we're updating the correct thing.
+	slice := make([]byte, 10, 20)
+	atomicStoreLength(&slice, 15)
+	require.Equal(t, 15, len(slice))
+}
+
+func Test_atomicStoreLengthAndCap(t *testing.T) {
+	// Doesn't verify atomicity, but at least we're updating the correct thing.
+	slice := make([]byte, 10, 20)
+	atomicStoreLengthAndCap(&slice, 12, 18)
+	require.Equal(t, 12, len(slice))
+	require.Equal(t, 18, cap(slice))
+}
+
+func TestNewMemoryInstance_Shared(t *testing.T) {
+	tests := []struct {
+		name string
+		mem  *Memory
+	}{
+		{
+			name: "min 0, max 1",
+			mem:  &Memory{Min: 0, Max: 1, IsMaxEncoded: true, IsShared: true},
+		},
+		{
+			name: "min 0, max 0",
+			mem:  &Memory{Min: 0, Max: 0, IsMaxEncoded: true, IsShared: true},
+		},
+	}
+
+	me := &mockModuleEngine{}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewMemoryInstance(tc.mem, nil, me)
+			require.Equal(t, tc.mem.Min, m.Min)
+			require.Equal(t, tc.mem.Max, m.Max)
+			require.Equal(t, me, m.ownerModuleEngine)
+			require.True(t, m.Shared)
+		})
+	}
+}
+
+func TestMemoryInstance_WaitNotifyOnce(t *testing.T) {
+	reader := func(mem *MemoryInstance, offset uint32) uint32 {
+		val, _ := mem.ReadUint32Le(offset)
+		return val
+	}
+	t.Run("no waiters", func(t *testing.T) {
+		mem := &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 16, 0, 0, 0}, Min: 1, Shared: true}
+
+		notifyWaiters(t, mem, 0, 1, 0)
+	})
+
+	t.Run("single wait, notify", func(t *testing.T) {
+		mem := &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 16, 0, 0, 0}, Min: 1, Shared: true}
+
+		ch := make(chan string)
+		// Reuse same offset 3 times to verify reuse
+		for i := 0; i < 3; i++ {
+			go func() {
+				res := mem.Wait32(0, 0, -1, reader)
+				propagateWaitResult(t, ch, res)
+			}()
+
+			requireChannelEmpty(t, ch)
+			notifyWaiters(t, mem, 0, 1, 1)
+			require.Equal(t, "", <-ch)
+
+			notifyWaiters(t, mem, 0, 1, 0)
+		}
+	})
+
+	t.Run("multiple waiters, notify all", func(t *testing.T) {
+		mem := &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 16, 0, 0, 0}, Min: 1, Shared: true}
+
+		ch := make(chan string)
+		go func() {
+			res := mem.Wait32(0, 0, -1, reader)
+			propagateWaitResult(t, ch, res)
+		}()
+		go func() {
+			res := mem.Wait32(0, 0, -1, reader)
+			propagateWaitResult(t, ch, res)
+		}()
+
+		requireChannelEmpty(t, ch)
+
+		notifyWaiters(t, mem, 0, 2, 2)
+		require.Equal(t, "", <-ch)
+		require.Equal(t, "", <-ch)
+	})
+
+	t.Run("multiple waiters, notify one", func(t *testing.T) {
+		mem := &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 16, 0, 0, 0}, Min: 1, Shared: true}
+
+		ch := make(chan string)
+		go func() {
+			res := mem.Wait32(0, 0, -1, reader)
+			propagateWaitResult(t, ch, res)
+		}()
+		go func() {
+			res := mem.Wait32(0, 0, -1, reader)
+			propagateWaitResult(t, ch, res)
+		}()
+
+		requireChannelEmpty(t, ch)
+		notifyWaiters(t, mem, 0, 1, 1)
+		require.Equal(t, "", <-ch)
+		requireChannelEmpty(t, ch)
+		notifyWaiters(t, mem, 0, 1, 1)
+		require.Equal(t, "", <-ch)
+	})
+
+	t.Run("multiple offsets", func(t *testing.T) {
+		mem := &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 16, 0, 0, 0}, Min: 1, Shared: true}
+
+		ch := make(chan string)
+		go func() {
+			res := mem.Wait32(0, 0, -1, reader)
+			propagateWaitResult(t, ch, res)
+		}()
+		go func() {
+			res := mem.Wait32(1, 268435456, -1, reader)
+			propagateWaitResult(t, ch, res)
+		}()
+
+		requireChannelEmpty(t, ch)
+		notifyWaiters(t, mem, 0, 2, 1)
+		require.Equal(t, "", <-ch)
+		requireChannelEmpty(t, ch)
+		notifyWaiters(t, mem, 1, 2, 1)
+		require.Equal(t, "", <-ch)
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		mem := &MemoryInstance{Buffer: []byte{0, 0, 0, 0, 16, 0, 0, 0}, Min: 1, Shared: true}
+
+		ch := make(chan string)
+		go func() {
+			res := mem.Wait32(0, 0, 10 /* ns */, reader)
+			propagateWaitResult(t, ch, res)
+		}()
+
+		require.Equal(t, "timeout", <-ch)
+	})
+}
+
+func notifyWaiters(t *testing.T, mem *MemoryInstance, offset, count, exp int) {
+	t.Helper()
+	cur := 0
+	tries := 0
+	for cur < exp {
+		if tries > 100 {
+			t.Fatal("too many tries waiting for wait and notify to converge")
+		}
+		n := mem.Notify(uint32(offset), uint32(count))
+		cur += int(n)
+		time.Sleep(1 * time.Millisecond)
+		tries++
+	}
+}
+
+func propagateWaitResult(t *testing.T, ch chan string, res uint64) {
+	t.Helper()
+	switch res {
+	case 2:
+		ch <- "timeout"
+	default:
+		ch <- ""
+	}
+}
+
+func requireChannelEmpty(t *testing.T, ch chan string) {
+	t.Helper()
+	select {
+	case <-ch:
+		t.Fatal("channel should be empty")
+	default:
+		// fallthrough
+	}
+}
+
+func sliceAllocator(cap, max uint64) experimental.LinearMemory {
+	return &sliceBuffer{make([]byte, cap), max}
+}
+
+type sliceBuffer struct {
+	buf []byte
+	max uint64
+}
+
+func (b *sliceBuffer) Free() {}
+
+func (b *sliceBuffer) Reallocate(size uint64) []byte {
+	if size > b.max {
+		return nil
+	}
+	if cap := uint64(cap(b.buf)); size > cap {
+		b.buf = append(b.buf[:cap], make([]byte, size-cap)...)
+	} else {
+		b.buf = b.buf[:size]
+	}
+	return b.buf
 }

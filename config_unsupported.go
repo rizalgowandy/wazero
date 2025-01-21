@@ -1,11 +1,8 @@
-//go:build !amd64 && !arm64
+// This is the opposite constraint of config_supported.go
+//go:build !(amd64 || arm64) || !(linux || darwin || freebsd || netbsd || dragonfly || solaris || windows)
 
 package wazero
 
-// CompilerSupported returns whether the compiler is supported in this environment.
-const CompilerSupported = false
-
-// NewRuntimeConfig returns NewRuntimeConfigInterpreter
-func NewRuntimeConfig() RuntimeConfig {
+func newRuntimeConfig() RuntimeConfig {
 	return NewRuntimeConfigInterpreter()
 }

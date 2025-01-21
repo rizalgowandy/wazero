@@ -1,7 +1,6 @@
 package hammer
 
 import (
-	"fmt"
 	"runtime"
 	"sync"
 	"testing"
@@ -9,7 +8,8 @@ import (
 
 // Hammer invokes a test concurrently in P goroutines N times per goroutine.
 //
-// Ex.
+// Here's an example:
+//
 //	P := 8               // max count of goroutines
 //	N := 1000            // work per goroutine
 //	if testing.Short() { // Adjust down if `-test.short`
@@ -37,7 +37,7 @@ type Hammer interface {
 	//	if t.Failed() {
 	//		return
 	//	}
-	Run(test func(name string), onRunning func())
+	Run(test func(p, n int), onRunning func())
 }
 
 // NewHammer returns a Hammer initialized to indicated count of goroutines (P) and iterations per goroutine (N).
@@ -57,7 +57,7 @@ type hammer struct {
 }
 
 // Run implements Hammer.Run
-func (h *hammer) Run(test func(name string), onRunning func()) {
+func (h *hammer) Run(test func(p, n int), onRunning func()) {
 	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(h.P / 2)) // Ensure goroutines have to switch cores.
 
 	// running track
@@ -73,7 +73,9 @@ func (h *hammer) Run(test func(name string), onRunning func()) {
 		go func() { // Launch goroutine 'p'
 			defer func() { // Ensure each require.XX failure is visible on hammer test fail.
 				if recovered := recover(); recovered != nil {
-					h.t.Error(recovered.(string))
+					// Has been seen to be string, runtime.errorString, and it may be others. Let
+					// printing take care of conversion in a generic way.
+					h.t.Error(recovered)
 				}
 				finished <- 1
 			}()
@@ -81,7 +83,7 @@ func (h *hammer) Run(test func(name string), onRunning func()) {
 
 			unblocked.Wait()           // Wait to be unblocked
 			for n := 0; n < h.N; n++ { // Invoke one test
-				test(fmt.Sprintf("%s:%d-%d", h.t.Name(), p, n))
+				test(p, n)
 			}
 		}()
 	}

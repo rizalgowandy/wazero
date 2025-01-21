@@ -11,17 +11,19 @@ import (
 	"strings"
 
 	"github.com/tetratelabs/wazero/api"
-	"github.com/tetratelabs/wazero/internal/buildoptions"
 	"github.com/tetratelabs/wazero/internal/wasmruntime"
+	"github.com/tetratelabs/wazero/sys"
 )
 
 // FuncName returns the naming convention of "moduleName.funcName".
 //
-// * moduleName is the possibly empty name the module was instantiated with.
-// * funcName is the name in the Custom Name section, an export name, or what the host defines.
-// * funcIdx is the position in the function index namespace, prefixed with imported functions.
+//   - moduleName is the possibly empty name the module was instantiated with.
+//   - funcName is the name in the Custom Name section.
+//   - funcIdx is the position in the function index, prefixed with
+//     imported functions.
 //
-// Note: "moduleName.[funcIdx]" is used when the funcName is empty, as commonly the case in TinyGo.
+// Note: "moduleName.$funcIdx" is used when the funcName is empty, as commonly
+// the case in TinyGo.
 func FuncName(moduleName, funcName string, funcIdx uint32) string {
 	var ret strings.Builder
 
@@ -29,9 +31,8 @@ func FuncName(moduleName, funcName string, funcIdx uint32) string {
 	ret.WriteString(moduleName)
 	ret.WriteByte('.')
 	if funcName == "" {
-		ret.WriteByte('[')
+		ret.WriteByte('$')
 		ret.WriteString(strconv.Itoa(int(funcIdx)))
-		ret.WriteByte(']')
 	} else {
 		ret.WriteString(funcName)
 	}
@@ -94,9 +95,10 @@ type ErrorBuilder interface {
 	// * funcName should be from FuncName
 	// * paramTypes should be from wasm.FunctionType
 	// * resultTypes should be from wasm.FunctionType
+	// * sources is the source code information for this frame and can be empty.
 	//
 	// Note: paramTypes and resultTypes are present because signature misunderstanding, mismatch or overflow are common.
-	AddFrame(funcName string, paramTypes, resultTypes []api.ValueType)
+	AddFrame(funcName string, paramTypes, resultTypes []api.ValueType, sources []string)
 
 	// FromRecovered returns an error with the wasm stack trace appended to it.
 	FromRecovered(recovered interface{}) error
@@ -107,15 +109,26 @@ func NewErrorBuilder() ErrorBuilder {
 }
 
 type stackTrace struct {
-	frames []string
+	// frameCount is the number of stack frame currently pushed into lines.
+	frameCount int
+	// lines contains the stack trace and possibly the inlined source code information.
+	lines []string
 }
 
+// GoRuntimeErrorTracePrefix is the prefix coming before the Go runtime stack trace included in the face of runtime.Error.
+// This is exported for testing purpose.
+const GoRuntimeErrorTracePrefix = "Go runtime stack trace:"
+
 func (s *stackTrace) FromRecovered(recovered interface{}) error {
-	if buildoptions.IsDebugMode {
+	if false {
 		debug.PrintStack()
 	}
 
-	stack := strings.Join(s.frames, "\n\t")
+	if exitErr, ok := recovered.(*sys.ExitError); ok { // Don't wrap an exit error!
+		return exitErr
+	}
+
+	stack := strings.Join(s.lines, "\n\t")
 
 	// If the error was internal, don't mention it was recovered.
 	if wasmErr, ok := recovered.(*wasmruntime.Error); ok {
@@ -123,23 +136,35 @@ func (s *stackTrace) FromRecovered(recovered interface{}) error {
 	}
 
 	// If we have a runtime.Error, something severe happened which should include the stack trace. This could be
-	// a nil pointer from wazero or a user-defined function from ModuleBuilder.
+	// a nil pointer from wazero or a user-defined function from HostModuleBuilder.
 	if runtimeErr, ok := recovered.(runtime.Error); ok {
-		// TODO: consider adding debug.Stack(), but last time we attempted, some tests became unstable.
-		return fmt.Errorf("%w (recovered by wazero)\nwasm stack trace:\n\t%s", runtimeErr, stack)
+		return fmt.Errorf("%w (recovered by wazero)\nwasm stack trace:\n\t%s\n\n%s\n%s",
+			runtimeErr, stack, GoRuntimeErrorTracePrefix, debug.Stack())
 	}
 
-	// At this point we expect the error was from a function defined by ModuleBuilder that intentionally called panic.
-	if runtimeErr, ok := recovered.(error); ok { // Ex. panic(errors.New("whoops"))
+	// At this point we expect the error was from a function defined by HostModuleBuilder that intentionally called panic.
+	if runtimeErr, ok := recovered.(error); ok { // e.g. panic(errors.New("whoops"))
 		return fmt.Errorf("%w (recovered by wazero)\nwasm stack trace:\n\t%s", runtimeErr, stack)
-	} else { // Ex. panic("whoops")
+	} else { // e.g. panic("whoops")
 		return fmt.Errorf("%v (recovered by wazero)\nwasm stack trace:\n\t%s", recovered, stack)
 	}
 }
 
-// AddFrame implements ErrorBuilder.Format
-func (s *stackTrace) AddFrame(funcName string, paramTypes, resultTypes []api.ValueType) {
-	// Format as best as we can, considering we don't yet have source and line numbers,
-	// TODO: include DWARF symbols. See #58
-	s.frames = append(s.frames, signature(funcName, paramTypes, resultTypes))
+// MaxFrames is the maximum number of frames to include in the stack trace.
+const MaxFrames = 30
+
+// AddFrame implements ErrorBuilder.AddFrame
+func (s *stackTrace) AddFrame(funcName string, paramTypes, resultTypes []api.ValueType, sources []string) {
+	if s.frameCount == MaxFrames {
+		return
+	}
+	s.frameCount++
+	sig := signature(funcName, paramTypes, resultTypes)
+	s.lines = append(s.lines, sig)
+	for _, source := range sources {
+		s.lines = append(s.lines, "\t"+source)
+	}
+	if s.frameCount == MaxFrames {
+		s.lines = append(s.lines, "... maybe followed by omitted frames")
+	}
 }

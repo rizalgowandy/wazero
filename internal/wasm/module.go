@@ -3,35 +3,20 @@ package wasm
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"reflect"
+	"io"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/tetratelabs/wazero/api"
-	experimental "github.com/tetratelabs/wazero/experimental"
+	"github.com/tetratelabs/wazero/experimental"
 	"github.com/tetratelabs/wazero/internal/ieee754"
 	"github.com/tetratelabs/wazero/internal/leb128"
 	"github.com/tetratelabs/wazero/internal/wasmdebug"
 )
-
-// DecodeModule parses the configured source into a Module. This function returns when the source is exhausted or
-// an error occurs. The result can be initialized for use via Store.Instantiate.
-//
-// Here's a description of the return values:
-// * result is the module parsed or nil on error
-// * err is a FormatError invoking the parser, dangling block comments or unexpected characters.
-// See binary.DecodeModule and text.DecodeModule
-type DecodeModule func(
-	source []byte,
-	enabledFeatures Features,
-	memorySizer func(minPages uint32, maxPages *uint32) (min, capacity, max uint32),
-) (result *Module, err error)
-
-// EncodeModule encodes the given module into a byte slice depending on the format of the implementation.
-// See binary.EncodeModule
-type EncodeModule func(m *Module) (bytes []byte)
 
 // Module is a WebAssembly binary representation.
 // See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#modules%E2%91%A8
@@ -39,17 +24,17 @@ type EncodeModule func(m *Module) (bytes []byte)
 // Differences from the specification:
 // * NameSection is the only key ("name") decoded from the SectionIDCustom.
 // * ExportSection is represented as a map for lookup convenience.
-// * HostFunctionSection is a custom section that contains any go `func`s. It may be present when CodeSection is not.
+// * Code.GoFunc is contains any go `func`. It may be present when Code.Body is not.
 type Module struct {
 	// TypeSection contains the unique FunctionType of functions imported or defined in this module.
 	//
 	// Note: Currently, there is no type ambiguity in the index as WebAssembly 1.0 only defines function type.
-	// In the future, other types may be introduced to support Features such as module linking.
+	// In the future, other types may be introduced to support CoreFeatures such as module linking.
 	//
 	// Note: In the Binary Format, this is SectionIDType.
 	//
 	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#types%E2%91%A0%E2%91%A0
-	TypeSection []*FunctionType
+	TypeSection []FunctionType
 
 	// ImportSection contains imported functions, tables, memories or globals required for instantiation
 	// (Store.Instantiate).
@@ -59,15 +44,24 @@ type Module struct {
 	// Note: In the Binary Format, this is SectionIDImport.
 	//
 	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#import-section%E2%91%A0
-	ImportSection []*Import
+	ImportSection []Import
+	// ImportFunctionCount ImportGlobalCount ImportMemoryCount, and ImportTableCount are
+	// the cached import count per ExternType set during decoding.
+	ImportFunctionCount,
+	ImportGlobalCount,
+	ImportMemoryCount,
+	ImportTableCount Index
+	// ImportPerModule maps a module name to the list of Import to be imported from the module.
+	// This is used to do fast import resolution during instantiation.
+	ImportPerModule map[string][]*Import
 
 	// FunctionSection contains the index in TypeSection of each function defined in this module.
 	//
-	// Note: The function Index namespace begins with imported functions and ends with those defined in this module.
+	// Note: The function Index space begins with imported functions and ends with those defined in this module.
 	// For example, if there are two imported functions and one defined in this module, the function Index 3 is defined
 	// in this module at FunctionSection[0].
 	//
-	// Note: FunctionSection is index correlated with the CodeSection. If given the same position, ex. 2, a function
+	// Note: FunctionSection is index correlated with the CodeSection. If given the same position, e.g. 2, a function
 	// type is at TypeSection[FunctionSection[2]], while its locals and body are at CodeSection[2].
 	//
 	// Note: In the Binary Format, this is SectionIDFunction.
@@ -77,7 +71,7 @@ type Module struct {
 
 	// TableSection contains each table defined in this module.
 	//
-	// Note: The table Index namespace begins with imported tables and ends with those defined in this module.
+	// Note: The table Index space begins with imported tables and ends with those defined in this module.
 	// For example, if there are two imported tables and one defined in this module, the table Index 3 is defined in
 	// this module at TableSection[0].
 	//
@@ -87,11 +81,11 @@ type Module struct {
 	// Note: In the Binary Format, this is SectionIDTable.
 	//
 	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#table-section%E2%91%A0
-	TableSection []*Table
+	TableSection []Table
 
 	// MemorySection contains each memory defined in this module.
 	//
-	// Note: The memory Index namespace begins with imported memories and ends with those defined in this module.
+	// Note: The memory Index space begins with imported memories and ends with those defined in this module.
 	// For example, if there are two imported memories and one defined in this module, the memory Index 3 is defined in
 	// this module at TableSection[0].
 	//
@@ -105,25 +99,28 @@ type Module struct {
 
 	// GlobalSection contains each global defined in this module.
 	//
-	// Global indexes are offset by any imported globals because the global index space begins with imports, followed by
+	// Global indexes are offset by any imported globals because the global index begins with imports, followed by
 	// ones defined in this module. For example, if there are two imported globals and three defined in this module, the
 	// global at index 3 is defined in this module at GlobalSection[0].
 	//
 	// Note: In the Binary Format, this is SectionIDGlobal.
 	//
 	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#global-section%E2%91%A0
-	GlobalSection []*Global
+	GlobalSection []Global
 
 	// ExportSection contains each export defined in this module.
 	//
 	// Note: In the Binary Format, this is SectionIDExport.
 	//
 	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#exports%E2%91%A0
-	ExportSection []*Export
+	ExportSection []Export
+	// Exports maps a name to Export, and is convenient for fast look up of exported instances at runtime.
+	// Each item of this map points to an element of ExportSection.
+	Exports map[string]*Export
 
 	// StartSection is the index of a function to call before returning from Store.Instantiate.
 	//
-	// Note: The index here is not the position in the FunctionSection, rather in the function index namespace, which
+	// Note: The index here is not the position in the FunctionSection, rather in the function index, which
 	// begins with imported functions.
 	//
 	// Note: In the Binary Format, this is SectionIDStart.
@@ -132,18 +129,20 @@ type Module struct {
 	StartSection *Index
 
 	// Note: In the Binary Format, this is SectionIDElement.
-	ElementSection []*ElementSegment
+	ElementSection []ElementSegment
 
-	// CodeSection is index-correlated with FunctionSection and contains each function's locals and body.
-	// When present, the HostFunctionSection must be nil.
+	// CodeSection is index-correlated with FunctionSection and contains each
+	// function's locals and body.
+	//
+	// When present, the HostFunctionSection of the same index must be nil.
 	//
 	// Note: In the Binary Format, this is SectionIDCode.
 	//
 	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#code-section%E2%91%A0
-	CodeSection []*Code
+	CodeSection []Code
 
 	// Note: In the Binary Format, this is SectionIDData.
-	DataSection []*DataSegment
+	DataSection []DataSegment
 
 	// NameSection is set when the SectionIDCustom "name" was successfully decoded from the binary format.
 	//
@@ -154,29 +153,38 @@ type Module struct {
 	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#custom-section%E2%91%A0
 	NameSection *NameSection
 
-	// HostFunctionSection is index-correlated with FunctionSection and contains a host function defined in Go.
-	// When present, the CodeSection must be nil.
+	// CustomSections are set when the SectionIDCustom other than "name" were successfully decoded from the binary format.
 	//
-	// Note: This section currently has no serialization format, so is not encodable.
-	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#host-functions%E2%91%A2
-	HostFunctionSection []*reflect.Value
-
-	// elementSegments are built on Validate when SectionIDElement is non-empty and all inputs are valid.
-	//
-	// Note: elementSegments retain Module.ElementSection order. Since an ElementSegment can overlap with another, order
-	// preservation ensures a consistent initialization result.
-	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#table-instances%E2%91%A0
-	validatedActiveElementSegments []*validatedActiveElementSegment
+	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#custom-section%E2%91%A0
+	CustomSections []*CustomSection
 
 	// DataCountSection is the optional section and holds the number of data segments in the data section.
 	//
-	// Note: This may exist in WebAssembly 2.0 or WebAssembly 1.0 with FeatureBulkMemoryOperations.
+	// Note: This may exist in WebAssembly 2.0 or WebAssembly 1.0 with CoreFeatureBulkMemoryOperations.
 	// See https://www.w3.org/TR/2022/WD-wasm-core-2-20220419/binary/modules.html#data-count-section
 	// See https://www.w3.org/TR/2022/WD-wasm-core-2-20220419/appendix/changes.html#bulk-memory-and-table-instructions
 	DataCountSection *uint32
 
-	// ID is the sha256 value of the source code (text/binary) and is used for caching.
+	// ID is the sha256 value of the source wasm plus the configurations which affect the runtime representation of
+	// Wasm binary. This is only used for caching.
 	ID ModuleID
+
+	// IsHostModule true if this is the host module, false otherwise.
+	IsHostModule bool
+
+	// functionDefinitionSectionInitOnce guards FunctionDefinitionSection so that it is initialized exactly once.
+	functionDefinitionSectionInitOnce sync.Once
+
+	// FunctionDefinitionSection is a wazero-specific section.
+	FunctionDefinitionSection []FunctionDefinition
+
+	// MemoryDefinitionSection is a wazero-specific section.
+	MemoryDefinitionSection []MemoryDefinition
+
+	// DWARFLines is used to emit DWARF based stack trace. This is created from the multiple custom sections
+	// as described in https://yurydelendik.github.io/webassembly-dwarf/, though it is not specified in the Wasm
+	// specification: https://github.com/WebAssembly/debugging/issues/1
+	DWARFLines *wasmdebug.DWARFLines
 }
 
 // ModuleID represents sha256 hash value uniquely assigned to Module.
@@ -190,32 +198,55 @@ const (
 	MaximumTableIndex    = uint32(1 << 27)
 )
 
-// AssignModuleID calculates a sha256 checksum on `source` and set Module.ID to the result.
-func (m *Module) AssignModuleID(source []byte) {
-	m.ID = sha256.Sum256(source)
+// AssignModuleID calculates a sha256 checksum on `wasm` and other args, and set Module.ID to the result.
+// See the doc on Module.ID on what it's used for.
+func (m *Module) AssignModuleID(wasm []byte, listeners []experimental.FunctionListener, withEnsureTermination bool) {
+	h := sha256.New()
+	h.Write(wasm)
+	// Use the pre-allocated space backed by m.ID below.
+
+	// Write the existence of listeners to the checksum per function.
+	for i, l := range listeners {
+		binary.LittleEndian.PutUint32(m.ID[:], uint32(i))
+		m.ID[4] = boolToByte(l != nil)
+		h.Write(m.ID[:5])
+	}
+	// Write the flag of ensureTermination to the checksum.
+	m.ID[0] = boolToByte(withEnsureTermination)
+	h.Write(m.ID[:1])
+	// Get checksum by passing the slice underlying m.ID.
+	h.Sum(m.ID[:0])
 }
 
-// TypeOfFunction returns the wasm.SectionIDType index for the given function namespace index or nil.
-// Note: The function index namespace is preceded by imported functions.
-// TODO: Returning nil should be impossible when decode results are validated. Validate decode before back-filling tests.
-func (m *Module) TypeOfFunction(funcIdx Index) *FunctionType {
-	typeSectionLength := uint32(len(m.TypeSection))
-	if typeSectionLength == 0 {
-		return nil
+func boolToByte(b bool) (ret byte) {
+	if b {
+		ret = 1
 	}
-	funcImportCount := Index(0)
-	for _, im := range m.ImportSection {
-		if im.Type == ExternTypeFunc {
-			if funcIdx == funcImportCount {
-				if im.DescFunc >= typeSectionLength {
+	return
+}
+
+// typeOfFunction returns the wasm.FunctionType for the given function space index or nil.
+func (m *Module) typeOfFunction(funcIdx Index) *FunctionType {
+	typeSectionLength, importedFunctionCount := uint32(len(m.TypeSection)), m.ImportFunctionCount
+	if funcIdx < importedFunctionCount {
+		// Imports are not exclusively functions. This is the current function index in the loop.
+		cur := Index(0)
+		for i := range m.ImportSection {
+			imp := &m.ImportSection[i]
+			if imp.Type != ExternTypeFunc {
+				continue
+			}
+			if funcIdx == cur {
+				if imp.DescFunc >= typeSectionLength {
 					return nil
 				}
-				return m.TypeSection[im.DescFunc]
+				return &m.TypeSection[imp.DescFunc]
 			}
-			funcImportCount++
+			cur++
 		}
 	}
-	funcSectionIdx := funcIdx - funcImportCount
+
+	funcSectionIdx := funcIdx - m.ImportFunctionCount
 	if funcSectionIdx >= uint32(len(m.FunctionSection)) {
 		return nil
 	}
@@ -223,16 +254,17 @@ func (m *Module) TypeOfFunction(funcIdx Index) *FunctionType {
 	if typeIdx >= typeSectionLength {
 		return nil
 	}
-	return m.TypeSection[typeIdx]
+	return &m.TypeSection[typeIdx]
 }
 
-func (m *Module) Validate(enabledFeatures Features) error {
-	if err := m.validateStartSection(); err != nil {
-		return err
+func (m *Module) Validate(enabledFeatures api.CoreFeatures) error {
+	for i := range m.TypeSection {
+		tp := &m.TypeSection[i]
+		tp.CacheNumInUint64()
 	}
 
-	if m.SectionElementCount(SectionIDCode) > 0 && m.SectionElementCount(SectionIDHostFunction) > 0 {
-		return errors.New("cannot mix functions and host functions in the same module")
+	if err := m.validateStartSection(); err != nil {
+		return err
 	}
 
 	functions, globals, memory, tables, err := m.AllDeclarations()
@@ -262,11 +294,11 @@ func (m *Module) Validate(enabledFeatures Features) error {
 		}
 	} // No need to validate host functions as NewHostModule validates
 
-	if _, err = m.validateTable(enabledFeatures, tables, MaximumTableIndex); err != nil {
+	if err = m.validateTable(enabledFeatures, tables, MaximumTableIndex); err != nil {
 		return err
 	}
 
-	if err := m.validateDataCountSection(); err != nil {
+	if err = m.validateDataCountSection(); err != nil {
 		return err
 	}
 	return nil
@@ -277,7 +309,7 @@ func (m *Module) validateStartSection() error {
 	// TODO: this should be verified during decode so that errors have the correct source positions
 	if m.StartSection != nil {
 		startIndex := *m.StartSection
-		ft := m.TypeOfFunction(startIndex)
+		ft := m.typeOfFunction(startIndex)
 		if ft == nil { // TODO: move this check to decoder so that a module can never be decoded invalidly
 			return fmt.Errorf("invalid start function: func[%d] has an invalid type", startIndex)
 		}
@@ -288,25 +320,26 @@ func (m *Module) validateStartSection() error {
 	return nil
 }
 
-func (m *Module) validateGlobals(globals []*GlobalType, numFuncts, maxGlobals uint32) error {
+func (m *Module) validateGlobals(globals []GlobalType, numFuncts, maxGlobals uint32) error {
 	if uint32(len(globals)) > maxGlobals {
 		return fmt.Errorf("too many globals in a module")
 	}
 
 	// Global initialization constant expression can only reference the imported globals.
 	// See the note on https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#constant-expressions%E2%91%A0
-	importedGlobals := globals[:m.ImportGlobalCount()]
-	for _, g := range m.GlobalSection {
-		if err := validateConstExpression(importedGlobals, numFuncts, g.Init, g.Type.ValType); err != nil {
+	importedGlobals := globals[:m.ImportGlobalCount]
+	for i := range m.GlobalSection {
+		g := &m.GlobalSection[i]
+		if err := validateConstExpression(importedGlobals, numFuncts, &g.Init, g.Type.ValType); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (m *Module) validateFunctions(enabledFeatures Features, functions []Index, globals []*GlobalType, memory *Memory, tables []*Table, maximumFunctionIndex uint32) error {
+func (m *Module) validateFunctions(enabledFeatures api.CoreFeatures, functions []Index, globals []GlobalType, memory *Memory, tables []Table, maximumFunctionIndex uint32) error {
 	if uint32(len(functions)) > maximumFunctionIndex {
-		return fmt.Errorf("too many functions in a store")
+		return fmt.Errorf("too many functions (%d) in a module", len(functions))
 	}
 
 	functionCount := m.SectionElementCount(SectionIDFunction)
@@ -325,12 +358,20 @@ func (m *Module) validateFunctions(enabledFeatures Features, functions []Index, 
 		return err
 	}
 
+	// Create bytes.Reader once as it causes allocation, and
+	// we frequently need it (e.g. on every If instruction).
+	br := bytes.NewReader(nil)
+	// Also, we reuse the stacks across multiple function validations to reduce allocations.
+	vs := &stacks{}
 	for idx, typeIndex := range m.FunctionSection {
 		if typeIndex >= typeCount {
 			return fmt.Errorf("invalid %s: type section index %d out of range", m.funcDesc(SectionIDFunction, Index(idx)), typeIndex)
 		}
-
-		if err := m.validateFunction(enabledFeatures, Index(idx), functions, globals, memory, tables, declaredFuncIndexes); err != nil {
+		c := &m.CodeSection[idx]
+		if c.GoFunc != nil {
+			continue
+		}
+		if err = m.validateFunction(vs, enabledFeatures, Index(idx), functions, globals, memory, tables, declaredFuncIndexes, br); err != nil {
 			return fmt.Errorf("invalid %s: %w", m.funcDesc(SectionIDFunction, Index(idx)), err)
 		}
 	}
@@ -341,34 +382,36 @@ func (m *Module) validateFunctions(enabledFeatures Features, functions []Index, 
 //
 // The criteria for which function indexes can be available for that instruction is vague in the spec:
 //
-//  * "References: the list of function indices that occur in the module outside functions and can hence be used to form references inside them."
-//   * https://www.w3.org/TR/2022/WD-wasm-core-2-20220419/valid/conventions.html#contexts
-//  * "Ref is the set funcidx(module with functions=ε, start=ε) , i.e., the set of function indices occurring in the module, except in its functions or start function."
-//   * https://www.w3.org/TR/2022/WD-wasm-core-2-20220419/valid/modules.html#valid-module
+//   - "References: the list of function indices that occur in the module outside functions and can hence be used to form references inside them."
+//   - https://www.w3.org/TR/2022/WD-wasm-core-2-20220419/valid/conventions.html#contexts
+//   - "Ref is the set funcidx(module with functions=ε, start=ε) , i.e., the set of function indices occurring in the module, except in its functions or start function."
+//   - https://www.w3.org/TR/2022/WD-wasm-core-2-20220419/valid/modules.html#valid-module
 //
 // To clarify, we reverse-engineer logic required to pass the WebAssembly Core specification 2.0 test suite:
 // https://github.com/WebAssembly/spec/blob/d39195773112a22b245ffbe864bab6d1182ccb06/test/core/ref_func.wast#L78-L115
 //
 // To summarize, the function indexes OpcodeRefFunc can refer include:
-//  * existing in an element section regardless of its mode (active, passive, declarative).
-//  * defined as globals whose value type is ValueRefFunc.
-//  * used as an exported function.
+//   - existing in an element section regardless of its mode (active, passive, declarative).
+//   - defined as globals whose value type is ValueRefFunc.
+//   - used as an exported function.
 //
 // See https://github.com/WebAssembly/reference-types/issues/31
 // See https://github.com/WebAssembly/reference-types/issues/76
 func (m *Module) declaredFunctionIndexes() (ret map[Index]struct{}, err error) {
 	ret = map[uint32]struct{}{}
 
-	for _, exp := range m.ExportSection {
+	for i := range m.ExportSection {
+		exp := &m.ExportSection[i]
 		if exp.Type == ExternTypeFunc {
 			ret[exp.Index] = struct{}{}
 		}
 	}
 
-	for i, g := range m.GlobalSection {
+	for i := range m.GlobalSection {
+		g := &m.GlobalSection[i]
 		if g.Init.Opcode == OpcodeRefFunc {
 			var index uint32
-			index, _, err = leb128.DecodeUint32(bytes.NewReader(g.Init.Data))
+			index, _, err = leb128.LoadUint32(g.Init.Data)
 			if err != nil {
 				err = fmt.Errorf("%s[%d] failed to initialize: %w", SectionIDName(SectionIDGlobal), i, err)
 				return
@@ -377,10 +420,11 @@ func (m *Module) declaredFunctionIndexes() (ret map[Index]struct{}, err error) {
 		}
 	}
 
-	for _, elem := range m.ElementSection {
+	for i := range m.ElementSection {
+		elem := &m.ElementSection[i]
 		for _, index := range elem.Init {
-			if index != nil {
-				ret[*index] = struct{}{}
+			if index != ElementInitNullReference {
+				ret[index] = struct{}{}
 			}
 		}
 	}
@@ -390,10 +434,11 @@ func (m *Module) declaredFunctionIndexes() (ret map[Index]struct{}, err error) {
 func (m *Module) funcDesc(sectionID SectionID, sectionIndex Index) string {
 	// Try to improve the error message by collecting any exports:
 	var exportNames []string
-	funcIdx := sectionIndex + m.importCount(ExternTypeFunc)
-	for _, e := range m.ExportSection {
-		if e.Index == funcIdx && e.Type == ExternTypeFunc {
-			exportNames = append(exportNames, fmt.Sprintf("%q", e.Name))
+	funcIdx := sectionIndex + m.ImportFunctionCount
+	for i := range m.ExportSection {
+		exp := &m.ExportSection[i]
+		if exp.Index == funcIdx && exp.Type == ExternTypeFunc {
+			exportNames = append(exportNames, fmt.Sprintf("%q", exp.Name))
 		}
 	}
 	sectionIDName := SectionIDName(sectionID)
@@ -404,10 +449,11 @@ func (m *Module) funcDesc(sectionID SectionID, sectionIndex Index) string {
 	return fmt.Sprintf("%s[%d] export[%s]", sectionIDName, sectionIndex, strings.Join(exportNames, ","))
 }
 
-func (m *Module) validateMemory(memory *Memory, globals []*GlobalType, enabledFeatures Features) error {
+func (m *Module) validateMemory(memory *Memory, globals []GlobalType, _ api.CoreFeatures) error {
 	var activeElementCount int
-	for _, sec := range m.DataSection {
-		if !sec.IsPassive() {
+	for i := range m.DataSection {
+		d := &m.DataSection[i]
+		if !d.IsPassive() {
 			activeElementCount++
 		}
 	}
@@ -415,9 +461,13 @@ func (m *Module) validateMemory(memory *Memory, globals []*GlobalType, enabledFe
 		return fmt.Errorf("unknown memory")
 	}
 
-	for _, d := range m.DataSection {
+	// Constant expression can only reference imported globals.
+	// https://github.com/WebAssembly/spec/blob/5900d839f38641989a9d8df2df4aee0513365d39/test/core/data.wast#L84-L91
+	importedGlobals := globals[:m.ImportGlobalCount]
+	for i := range m.DataSection {
+		d := &m.DataSection[i]
 		if !d.IsPassive() {
-			if err := validateConstExpression(globals, 0, d.OffsetExpression, ValueTypeI32); err != nil {
+			if err := validateConstExpression(importedGlobals, 0, &d.OffsetExpression, ValueTypeI32); err != nil {
 				return fmt.Errorf("calculate offset: %w", err)
 			}
 		}
@@ -425,23 +475,32 @@ func (m *Module) validateMemory(memory *Memory, globals []*GlobalType, enabledFe
 	return nil
 }
 
-func (m *Module) validateImports(enabledFeatures Features) error {
-	for _, i := range m.ImportSection {
-		switch i.Type {
+func (m *Module) validateImports(enabledFeatures api.CoreFeatures) error {
+	for i := range m.ImportSection {
+		imp := &m.ImportSection[i]
+		if imp.Module == "" {
+			return fmt.Errorf("import[%d] has an empty module name", i)
+		}
+		switch imp.Type {
+		case ExternTypeFunc:
+			if int(imp.DescFunc) >= len(m.TypeSection) {
+				return fmt.Errorf("invalid import[%q.%q] function: type index out of range", imp.Module, imp.Name)
+			}
 		case ExternTypeGlobal:
-			if !i.DescGlobal.Mutable {
+			if !imp.DescGlobal.Mutable {
 				continue
 			}
-			if err := enabledFeatures.Require(FeatureMutableGlobal); err != nil {
-				return fmt.Errorf("invalid import[%q.%q] global: %w", i.Module, i.Name, err)
+			if err := enabledFeatures.RequireEnabled(api.CoreFeatureMutableGlobal); err != nil {
+				return fmt.Errorf("invalid import[%q.%q] global: %w", imp.Module, imp.Name, err)
 			}
 		}
 	}
 	return nil
 }
 
-func (m *Module) validateExports(enabledFeatures Features, functions []Index, globals []*GlobalType, memory *Memory, tables []*Table) error {
-	for _, exp := range m.ExportSection {
+func (m *Module) validateExports(enabledFeatures api.CoreFeatures, functions []Index, globals []GlobalType, memory *Memory, tables []Table) error {
+	for i := range m.ExportSection {
+		exp := &m.ExportSection[i]
 		index := exp.Index
 		switch exp.Type {
 		case ExternTypeFunc:
@@ -455,7 +514,7 @@ func (m *Module) validateExports(enabledFeatures Features, functions []Index, gl
 			if !globals[index].Mutable {
 				continue
 			}
-			if err := enabledFeatures.Require(FeatureMutableGlobal); err != nil {
+			if err := enabledFeatures.RequireEnabled(api.CoreFeatureMutableGlobal); err != nil {
 				return fmt.Errorf("invalid export[%q] global[%d]: %w", exp.Name, index, err)
 			}
 		case ExternTypeMemory:
@@ -471,38 +530,37 @@ func (m *Module) validateExports(enabledFeatures Features, functions []Index, gl
 	return nil
 }
 
-func validateConstExpression(globals []*GlobalType, numFuncs uint32, expr *ConstantExpression, expectedType ValueType) (err error) {
+func validateConstExpression(globals []GlobalType, numFuncs uint32, expr *ConstantExpression, expectedType ValueType) (err error) {
 	var actualType ValueType
-	r := bytes.NewReader(expr.Data)
 	switch expr.Opcode {
 	case OpcodeI32Const:
 		// Treat constants as signed as their interpretation is not yet known per /RATIONALE.md
-		_, _, err = leb128.DecodeInt32(r)
+		_, _, err = leb128.LoadInt32(expr.Data)
 		if err != nil {
 			return fmt.Errorf("read i32: %w", err)
 		}
 		actualType = ValueTypeI32
 	case OpcodeI64Const:
 		// Treat constants as signed as their interpretation is not yet known per /RATIONALE.md
-		_, _, err = leb128.DecodeInt64(r)
+		_, _, err = leb128.LoadInt64(expr.Data)
 		if err != nil {
 			return fmt.Errorf("read i64: %w", err)
 		}
 		actualType = ValueTypeI64
 	case OpcodeF32Const:
-		_, err = ieee754.DecodeFloat32(r)
+		_, err = ieee754.DecodeFloat32(expr.Data)
 		if err != nil {
 			return fmt.Errorf("read f32: %w", err)
 		}
 		actualType = ValueTypeF32
 	case OpcodeF64Const:
-		_, err = ieee754.DecodeFloat64(r)
+		_, err = ieee754.DecodeFloat64(expr.Data)
 		if err != nil {
 			return fmt.Errorf("read f64: %w", err)
 		}
 		actualType = ValueTypeF64
 	case OpcodeGlobalGet:
-		id, _, err := leb128.DecodeUint32(r)
+		id, _, err := leb128.LoadUint32(expr.Data)
 		if err != nil {
 			return fmt.Errorf("read index of global: %w", err)
 		}
@@ -511,15 +569,16 @@ func validateConstExpression(globals []*GlobalType, numFuncs uint32, expr *Const
 		}
 		actualType = globals[id].ValType
 	case OpcodeRefNull:
-		reftype, err := r.ReadByte()
-		if err != nil {
-			return fmt.Errorf("read reference type for ref.null: %w", err)
-		} else if reftype != RefTypeFuncref && reftype != RefTypeExternref {
+		if len(expr.Data) == 0 {
+			return fmt.Errorf("read reference type for ref.null: %w", io.ErrShortBuffer)
+		}
+		reftype := expr.Data[0]
+		if reftype != RefTypeFuncref && reftype != RefTypeExternref {
 			return fmt.Errorf("invalid type for ref.null: 0x%x", reftype)
 		}
 		actualType = reftype
 	case OpcodeRefFunc:
-		index, _, err := leb128.DecodeUint32(r)
+		index, _, err := leb128.LoadUint32(expr.Data)
 		if err != nil {
 			return fmt.Errorf("read i32: %w", err)
 		} else if index >= numFuncs {
@@ -550,89 +609,35 @@ func (m *Module) validateDataCountSection() (err error) {
 	return
 }
 
-func (m *Module) buildGlobals(importedGlobals []*GlobalInstance) (globals []*GlobalInstance) {
-	for _, gs := range m.GlobalSection {
-		g := &GlobalInstance{Type: gs.Type}
-		switch v := executeConstExpression(importedGlobals, gs.Init).(type) {
-		case int32:
-			g.Val = uint64(v)
-		case int64:
-			g.Val = uint64(v)
-		case float32:
-			g.Val = api.EncodeF32(v)
-		case float64:
-			g.Val = api.EncodeF64(v)
-		case [2]uint64:
-			g.Val, g.ValHi = v[0], v[1]
-		default:
-			panic(fmt.Errorf("BUG: invalid conversion %d", v))
+func (m *ModuleInstance) buildGlobals(module *Module, funcRefResolver func(funcIndex Index) Reference) {
+	importedGlobals := m.Globals[:module.ImportGlobalCount]
+
+	me := m.Engine
+	engineOwnGlobal := me.OwnsGlobals()
+	for i := Index(0); i < Index(len(module.GlobalSection)); i++ {
+		gs := &module.GlobalSection[i]
+		g := &GlobalInstance{}
+		if engineOwnGlobal {
+			g.Me = me
+			g.Index = i + module.ImportGlobalCount
 		}
-		globals = append(globals, g)
+		m.Globals[i+module.ImportGlobalCount] = g
+		g.Type = gs.Type
+		g.initialize(importedGlobals, &gs.Init, funcRefResolver)
 	}
-	return
-}
-
-func (m *Module) buildFunctions(moduleName string, fnlf experimental.FunctionListenerFactory) (functions []*FunctionInstance) {
-	var functionNames NameMap
-	var localNames IndirectNameMap
-	if m.NameSection != nil {
-		functionNames = m.NameSection.FunctionNames
-		localNames = m.NameSection.LocalNames
-	}
-
-	importCount := m.ImportFuncCount()
-	n, nLen := 0, len(functionNames)
-	for codeIndex, typeIndex := range m.FunctionSection {
-		// The function name section begins with imports, but can be sparse. This keeps track of how far in the name
-		// section we've already searched.
-		funcIdx := importCount + uint32(codeIndex)
-		var funcName string
-		for ; n < nLen; n++ {
-			next := functionNames[n]
-			if next.Index > funcIdx {
-				break // we have function names, but starting at a later index
-			} else if next.Index == funcIdx {
-				funcName = next.Name
-				break
-			}
-		}
-
-		f := &FunctionInstance{
-			Kind:       FunctionKindWasm,
-			Type:       m.TypeSection[typeIndex],
-			Body:       m.CodeSection[codeIndex].Body,
-			LocalTypes: m.CodeSection[codeIndex].LocalTypes,
-			Idx:        funcIdx,
-		}
-
-		f.DebugName = wasmdebug.FuncName(moduleName, funcName, funcIdx)
-		f.moduleName = moduleName
-		f.name = funcName
-		f.paramNames = paramNames(localNames, funcIdx, len(f.ParamTypes()))
-
-		for _, e := range m.ExportSection {
-			if e.Type == ExternTypeFunc && e.Index == funcIdx {
-				f.exportNames = append(f.exportNames, e.Name)
-			}
-		}
-
-		if fnlf != nil {
-			f.FunctionListener = fnlf.NewListener(f)
-		}
-		functions = append(functions, f)
-	}
-	return
 }
 
 func paramNames(localNames IndirectNameMap, funcIdx uint32, paramLen int) []string {
-	for _, nm := range localNames {
+	for i := range localNames {
+		nm := &localNames[i]
 		// Only build parameter names if we have one for each.
 		if nm.Index != funcIdx || len(nm.NameMap) < paramLen {
 			continue
 		}
 
 		ret := make([]string, paramLen)
-		for _, p := range nm.NameMap {
+		for j := range nm.NameMap {
+			p := &nm.NameMap[j]
 			if int(p.Index) < paramLen {
 				ret[p.Index] = p.Name
 			}
@@ -642,18 +647,18 @@ func paramNames(localNames IndirectNameMap, funcIdx uint32, paramLen int) []stri
 	return nil
 }
 
-func (m *Module) buildMemory() (mem *MemoryInstance) {
-	memSec := m.MemorySection
+func (m *ModuleInstance) buildMemory(module *Module, allocator experimental.MemoryAllocator) {
+	memSec := module.MemorySection
 	if memSec != nil {
-		mem = NewMemoryInstance(memSec)
+		m.MemoryInstance = NewMemoryInstance(memSec, allocator, m.Engine)
+		m.MemoryInstance.definition = &module.MemoryDefinitionSection[0]
 	}
-	return
 }
 
-// Index is the offset in an index namespace, not necessarily an absolute position in a Module section. This is because
-// index namespaces are often preceded by a corresponding type in the Module.ImportSection.
+// Index is the offset in an index, not necessarily an absolute position in a Module section. This is because
+// indexs are often preceded by a corresponding type in the Module.ImportSection.
 //
-// For example, the function index namespace starts with any ExternTypeFunc in the Module.ImportSection followed by
+// For example, the function index starts with any ExternTypeFunc in the Module.ImportSection followed by
 // the Module.FunctionSection
 //
 // See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#binary-index
@@ -683,52 +688,57 @@ type FunctionType struct {
 }
 
 func (f *FunctionType) CacheNumInUint64() {
-	for _, tp := range f.Params {
-		f.ParamNumInUint64++
-		if tp == ValueTypeV128 {
+	if f.ParamNumInUint64 == 0 {
+		for _, tp := range f.Params {
 			f.ParamNumInUint64++
+			if tp == ValueTypeV128 {
+				f.ParamNumInUint64++
+			}
 		}
 	}
 
-	for _, tp := range f.Results {
-		f.ResultNumInUint64++
-		if tp == ValueTypeV128 {
+	if f.ResultNumInUint64 == 0 {
+		for _, tp := range f.Results {
 			f.ResultNumInUint64++
+			if tp == ValueTypeV128 {
+				f.ResultNumInUint64++
+			}
 		}
 	}
 }
 
 // EqualsSignature returns true if the function type has the same parameters and results.
-func (t *FunctionType) EqualsSignature(params []ValueType, results []ValueType) bool {
-	return bytes.Equal(t.Params, params) && bytes.Equal(t.Results, results)
+func (f *FunctionType) EqualsSignature(params []ValueType, results []ValueType) bool {
+	return bytes.Equal(f.Params, params) && bytes.Equal(f.Results, results)
 }
 
-// key gets or generates the key for Store.typeIDs. Ex. "i32_v" for one i32 parameter and no (void) result.
-func (t *FunctionType) key() string {
-	if t.string != "" {
-		return t.string
+// key gets or generates the key for Store.typeIDs. e.g. "i32_v" for one i32 parameter and no (void) result.
+func (f *FunctionType) key() string {
+	if f.string != "" {
+		return f.string
 	}
 	var ret string
-	for _, b := range t.Params {
+	for _, b := range f.Params {
 		ret += ValueTypeName(b)
 	}
-	if len(t.Params) == 0 {
-		ret += "v"
+	if len(f.Params) == 0 {
+		ret += "v_"
+	} else {
+		ret += "_"
 	}
-	ret += "_"
-	for _, b := range t.Results {
+	for _, b := range f.Results {
 		ret += ValueTypeName(b)
 	}
-	if len(t.Results) == 0 {
+	if len(f.Results) == 0 {
 		ret += "v"
 	}
-	t.string = ret
+	f.string = ret
 	return ret
 }
 
 // String implements fmt.Stringer.
-func (t *FunctionType) String() string {
-	return t.key()
+func (f *FunctionType) String() string {
+	return f.key()
 }
 
 // Import is the binary representation of an import indicated by Type
@@ -742,39 +752,43 @@ type Import struct {
 	// DescFunc is the index in Module.TypeSection when Type equals ExternTypeFunc
 	DescFunc Index
 	// DescTable is the inlined Table when Type equals ExternTypeTable
-	DescTable *Table
+	DescTable Table
 	// DescMem is the inlined Memory when Type equals ExternTypeMemory
 	DescMem *Memory
 	// DescGlobal is the inlined GlobalType when Type equals ExternTypeGlobal
-	DescGlobal *GlobalType
+	DescGlobal GlobalType
+	// IndexPerType has the index of this import per ExternType.
+	IndexPerType Index
 }
 
 // Memory describes the limits of pages (64KB) in a memory.
 type Memory struct {
 	Min, Cap, Max uint32
-	// IsMaxEncoded true if the Max is encoded in the original source (binary or text).
+	// IsMaxEncoded true if the Max is encoded in the original binary.
 	IsMaxEncoded bool
+	// IsShared true if the memory is shared for access from multiple agents.
+	IsShared bool
 }
 
 // Validate ensures values assigned to Min, Cap and Max are within valid thresholds.
-func (m *Memory) Validate() error {
+func (m *Memory) Validate(memoryLimitPages uint32) error {
 	min, capacity, max := m.Min, m.Cap, m.Max
 
-	if max > MemoryLimitPages {
+	if max > memoryLimitPages {
 		return fmt.Errorf("max %d pages (%s) over limit of %d pages (%s)",
-			max, PagesToUnitOfBytes(max), MemoryLimitPages, PagesToUnitOfBytes(MemoryLimitPages))
-	} else if min > MemoryLimitPages {
+			max, PagesToUnitOfBytes(max), memoryLimitPages, PagesToUnitOfBytes(memoryLimitPages))
+	} else if min > memoryLimitPages {
 		return fmt.Errorf("min %d pages (%s) over limit of %d pages (%s)",
-			min, PagesToUnitOfBytes(min), MemoryLimitPages, PagesToUnitOfBytes(MemoryLimitPages))
+			min, PagesToUnitOfBytes(min), memoryLimitPages, PagesToUnitOfBytes(memoryLimitPages))
 	} else if min > max {
 		return fmt.Errorf("min %d pages (%s) > max %d pages (%s)",
 			min, PagesToUnitOfBytes(min), max, PagesToUnitOfBytes(max))
 	} else if capacity < min {
 		return fmt.Errorf("capacity %d pages (%s) less than minimum %d pages (%s)",
 			capacity, PagesToUnitOfBytes(capacity), min, PagesToUnitOfBytes(min))
-	} else if capacity > MemoryLimitPages {
+	} else if capacity > memoryLimitPages {
 		return fmt.Errorf("capacity %d pages (%s) over limit of %d pages (%s)",
-			capacity, PagesToUnitOfBytes(capacity), MemoryLimitPages, PagesToUnitOfBytes(MemoryLimitPages))
+			capacity, PagesToUnitOfBytes(capacity), memoryLimitPages, PagesToUnitOfBytes(memoryLimitPages))
 	}
 	return nil
 }
@@ -785,8 +799,8 @@ type GlobalType struct {
 }
 
 type Global struct {
-	Type *GlobalType
-	Init *ConstantExpression
+	Type GlobalType
+	Init ConstantExpression
 }
 
 type ConstantExpression struct {
@@ -802,8 +816,8 @@ type Export struct {
 	// Name is what the host refers to this definition as.
 	Name string
 
-	// Index is the index of the definition to export, the index namespace is by Type
-	// Ex. If ExternTypeFunc, this is a position in the function index namespace.
+	// Index is the index of the definition to export, the index is by Type
+	// e.g. If ExternTypeFunc, this is a position in the function index.
 	Index Index
 }
 
@@ -817,11 +831,24 @@ type Code struct {
 	// Body is a sequence of expressions ending in OpcodeEnd
 	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#binary-expr
 	Body []byte
+
+	// GoFunc is non-nil when IsHostFunction and defined in go, either
+	// api.GoFunction or api.GoModuleFunction. When present, LocalTypes and Body must
+	// be nil.
+	//
+	// Note: This has no serialization format, so is not encodable.
+	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#host-functions%E2%91%A2
+	GoFunc interface{}
+
+	// BodyOffsetInCodeSection is the offset of the beginning of the body in the code section.
+	// This is used for DWARF based stack trace where a program counter represents an offset in code section.
+	BodyOffsetInCodeSection uint64
 }
 
 type DataSegment struct {
-	OffsetExpression *ConstantExpression
+	OffsetExpression ConstantExpression
 	Init             []byte
+	Passive          bool
 }
 
 // IsPassive returns true if this data segment is "passive" in the sense that memory offset and
@@ -830,7 +857,7 @@ type DataSegment struct {
 //
 // See https://www.w3.org/TR/2022/WD-wasm-core-2-20220419/appendix/changes.html#bulk-memory-and-table-instructions
 func (d *DataSegment) IsPassive() bool {
-	return d.OffsetExpression == nil
+	return d.Passive
 }
 
 // NameSection represent the known custom name subsections defined in the WebAssembly Binary Format
@@ -838,17 +865,17 @@ func (d *DataSegment) IsPassive() bool {
 // Note: This can be nil if no names were decoded for any reason including configuration.
 // See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#name-section%E2%91%A0
 type NameSection struct {
-	// ModuleName is the symbolic identifier for a module. Ex. math
+	// ModuleName is the symbolic identifier for a module. e.g. math
 	//
 	// Note: This can be empty for any reason including configuration.
 	ModuleName string
 
-	// FunctionNames is an association of a function index to its symbolic identifier. Ex. add
+	// FunctionNames is an association of a function index to its symbolic identifier. e.g. add
 	//
-	// * the key (idx) is in the function namespace, where module defined functions are preceded by imported ones.
+	// * the key (idx) is in the function index, where module defined functions are preceded by imported ones.
 	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#functions%E2%91%A7
 	//
-	// Ex. Assuming the below text format is the second import, you would expect FunctionNames[1] = "mul"
+	// For example, assuming the below text format is the second import, you would expect FunctionNames[1] = "mul"
 	//	(import "Math" "Mul" (func $mul (param $x f32) (param $y f32) (result f32)))
 	//
 	// Note: FunctionNames are only used for debugging. At runtime, functions are called based on raw numeric index.
@@ -857,7 +884,8 @@ type NameSection struct {
 
 	// LocalNames contains symbolic names for function parameters or locals that have one.
 	//
-	// Note: In the Text Format, function local names can inherit parameter names from their type. Ex.
+	// Note: In the Text Format, function local names can inherit parameter
+	// names from their type. Here are some examples:
 	//  * (module (import (func (param $x i32) (param i32))) (func (type 0))) = [{0, {x,0}}]
 	//  * (module (import (func (param i32) (param $y i32))) (func (type 0) (local $z i32))) = [0, [{y,1},{z,2}]]
 	//  * (module (func (param $x i32) (local $y i32) (local $z i32))) = [{x,0},{y,1},{z,2}]
@@ -865,17 +893,26 @@ type NameSection struct {
 	// Note: LocalNames are only used for debugging. At runtime, locals are called based on raw numeric index.
 	// Note: This can be nil for any reason including configuration.
 	LocalNames IndirectNameMap
+
+	// ResultNames is a wazero-specific mechanism to store result names.
+	ResultNames IndirectNameMap
+}
+
+// CustomSection contains the name and raw data of a custom section.
+type CustomSection struct {
+	Name string
+	Data []byte
 }
 
 // NameMap associates an index with any associated names.
 //
-// Note: Often the index namespace bridges multiple sections. For example, the function index namespace starts with any
+// Note: Often the index bridges multiple sections. For example, the function index starts with any
 // ExternTypeFunc in the Module.ImportSection followed by the Module.FunctionSection
 //
 // Note: NameMap is unique by NameAssoc.Index, but NameAssoc.Name needn't be unique.
 // Note: When encoding in the Binary format, this must be ordered by NameAssoc.Index
 // See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#binary-namemap
-type NameMap []*NameAssoc
+type NameMap []NameAssoc
 
 type NameAssoc struct {
 	Index Index
@@ -887,7 +924,7 @@ type NameAssoc struct {
 // Note: IndirectNameMap is unique by NameMapAssoc.Index, but NameMapAssoc.NameMap needn't be unique.
 // Note: When encoding in the Binary format, this must be ordered by NameMapAssoc.Index
 // https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#binary-indirectnamemap
-type IndirectNameMap []*NameMapAssoc
+type IndirectNameMap []NameMapAssoc
 
 type NameMapAssoc struct {
 	Index   Index
@@ -895,8 +932,9 @@ type NameMapAssoc struct {
 }
 
 // AllDeclarations returns all declarations for functions, globals, memories and tables in a module including imported ones.
-func (m *Module) AllDeclarations() (functions []Index, globals []*GlobalType, memory *Memory, tables []*Table, err error) {
-	for _, imp := range m.ImportSection {
+func (m *Module) AllDeclarations() (functions []Index, globals []GlobalType, memory *Memory, tables []Table, err error) {
+	for i := range m.ImportSection {
+		imp := &m.ImportSection[i]
 		switch imp.Type {
 		case ExternTypeFunc:
 			functions = append(functions, imp.DescFunc)
@@ -910,7 +948,8 @@ func (m *Module) AllDeclarations() (functions []Index, globals []*GlobalType, me
 	}
 
 	functions = append(functions, m.FunctionSection...)
-	for _, g := range m.GlobalSection {
+	for i := range m.GlobalSection {
+		g := &m.GlobalSection[i]
 		globals = append(globals, g.Type)
 	}
 	if m.MemorySection != nil {
@@ -949,17 +988,12 @@ const (
 	SectionIDCode
 	SectionIDData
 
-	// SectionIDDataCount may exist in WebAssembly 2.0 or WebAssembly 1.0 with FeatureBulkMemoryOperations enabled.
+	// SectionIDDataCount may exist in WebAssembly 2.0 or WebAssembly 1.0 with CoreFeatureBulkMemoryOperations enabled.
 	//
 	// See https://www.w3.org/TR/2022/WD-wasm-core-2-20220419/binary/modules.html#data-count-section
 	// See https://www.w3.org/TR/2022/WD-wasm-core-2-20220419/appendix/changes.html#bulk-memory-and-table-instructions
 	SectionIDDataCount
 )
-
-// SectionIDHostFunction is a pseudo-section ID for host functions.
-//
-// Note: This is not defined in the WebAssembly 1.0 (20191205) Binary Format.
-const SectionIDHostFunction = SectionID(0xff)
 
 // SectionIDName returns the canonical name of a module section.
 // https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#sections%E2%91%A0
@@ -989,8 +1023,6 @@ func SectionIDName(sectionID SectionID) string {
 		return "code"
 	case SectionIDData:
 		return "data"
-	case SectionIDHostFunction:
-		return "host_function"
 	case SectionIDDataCount:
 		return "data_count"
 	}
@@ -1006,7 +1038,7 @@ const (
 	ValueTypeF32 = api.ValueTypeF32
 	ValueTypeF64 = api.ValueTypeF64
 	// TODO: ValueTypeV128 is not exposed in the api pkg yet.
-	ValueTypeV128 = 0x7b
+	ValueTypeV128 ValueType = 0x7b
 	// TODO: ValueTypeFuncref is not exposed in the api pkg yet.
 	ValueTypeFuncref   ValueType = 0x70
 	ValueTypeExternref           = api.ValueTypeExternref

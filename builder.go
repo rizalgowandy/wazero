@@ -2,299 +2,366 @@ package wazero
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/tetratelabs/wazero/api"
-	"github.com/tetratelabs/wazero/internal/leb128"
-	"github.com/tetratelabs/wazero/internal/u64"
 	"github.com/tetratelabs/wazero/internal/wasm"
 )
 
-// ModuleBuilder is a way to define a WebAssembly 1.0 (20191205) in Go.
+// HostFunctionBuilder defines a host function (in Go), so that a
+// WebAssembly binary (e.g. %.wasm file) can import and use it.
 //
-// Ex. Below defines and instantiates a module named "env" with one function:
+// Here's an example of an addition function:
 //
-//	ctx := context.Background()
-//	r := wazero.NewRuntime()
-//	defer r.Close(ctx) // This closes everything this Runtime created.
+//	hostModuleBuilder.NewFunctionBuilder().
+//		WithFunc(func(cxt context.Context, x, y uint32) uint32 {
+//			return x + y
+//		}).
+//		Export("add")
 //
-//	hello := func() {
-//		fmt.Fprintln(stdout, "hello!")
+// # Memory
+//
+// All host functions act on the importing api.Module, including any memory
+// exported in its binary (%.wasm file). If you are reading or writing memory,
+// it is sand-boxed Wasm memory defined by the guest.
+//
+// Below, `m` is the importing module, defined in Wasm. `fn` is a host function
+// added via Export. This means that `x` was read from memory defined in Wasm,
+// not arbitrary memory in the process.
+//
+//	fn := func(ctx context.Context, m api.Module, offset uint32) uint32 {
+//		x, _ := m.Memory().ReadUint32Le(ctx, offset)
+//		return x
 //	}
-//	env, _ := r.NewModuleBuilder("env").
-//		ExportFunction("hello", hello).
-//		Instantiate(ctx)
 //
-// If the same module may be instantiated multiple times, it is more efficient to separate steps. Ex.
+// # Notes
 //
-//	compiled, _ := r.NewModuleBuilder("env").
-//		ExportFunction("get_random_string", getRandomString).
-//		Compile(ctx, wazero.NewCompileConfig())
-//
-//	env1, _ := r.InstantiateModule(ctx, compiled, wazero.NewModuleConfig().WithName("env.1"))
-//
-//	env2, _ := r.InstantiateModule(ctx, compiled, wazero.NewModuleConfig().WithName("env.2"))
-//
-// Notes:
-// * ModuleBuilder is mutable. WithXXX functions return the same instance for chaining.
-// * WithXXX methods do not return errors, to allow chaining. Any validation errors are deferred until Build.
-// * Insertion order is not retained. Anything defined by this builder is sorted lexicographically on Build.
-type ModuleBuilder interface {
-	// Note: until golang/go#5860, we can't use example tests to embed code in interface godocs.
+//   - This is an interface for decoupling, not third-party implementations.
+//     All implementations are in wazero.
+type HostFunctionBuilder interface {
+	// WithGoFunction is an advanced feature for those who need higher
+	// performance than WithFunc at the cost of more complexity.
+	//
+	// Here's an example addition function:
+	//
+	//	builder.WithGoFunction(api.GoFunc(func(ctx context.Context, stack []uint64) {
+	//		x, y := api.DecodeI32(stack[0]), api.DecodeI32(stack[1])
+	//		sum := x + y
+	//		stack[0] = api.EncodeI32(sum)
+	//	}), []api.ValueType{api.ValueTypeI32, api.ValueTypeI32}, []api.ValueType{api.ValueTypeI32})
+	//
+	// As you can see above, defining in this way implies knowledge of which
+	// WebAssembly api.ValueType is appropriate for each parameter and result.
+	//
+	// See WithGoModuleFunction if you also need to access the calling module.
+	WithGoFunction(fn api.GoFunction, params, results []api.ValueType) HostFunctionBuilder
 
-	// ExportFunction adds a function written in Go, which a WebAssembly module can import.
+	// WithGoModuleFunction is an advanced feature for those who need higher
+	// performance than WithFunc at the cost of more complexity.
 	//
-	// * name - the name to export. Ex "random_get"
-	// * goFunc - the `func` to export.
+	// Here's an example addition function that loads operands from memory:
 	//
-	// Noting a context exception described later, all parameters or result types must match WebAssembly 1.0 (20191205) value
-	// types. This means uint32, uint64, float32 or float64. Up to one result can be returned.
+	//	builder.WithGoModuleFunction(api.GoModuleFunc(func(ctx context.Context, m api.Module, stack []uint64) {
+	//		mem := m.Memory()
+	//		offset := api.DecodeU32(stack[0])
 	//
-	// Ex. This is a valid host function:
+	//		x, _ := mem.ReadUint32Le(ctx, offset)
+	//		y, _ := mem.ReadUint32Le(ctx, offset + 4) // 32 bits == 4 bytes!
+	//		sum := x + y
 	//
-	//	addInts := func(x uint32, uint32) uint32 {
+	//		stack[0] = api.EncodeU32(sum)
+	//	}), []api.ValueType{api.ValueTypeI32}, []api.ValueType{api.ValueTypeI32})
+	//
+	// As you can see above, defining in this way implies knowledge of which
+	// WebAssembly api.ValueType is appropriate for each parameter and result.
+	//
+	// See WithGoFunction if you don't need access to the calling module.
+	WithGoModuleFunction(fn api.GoModuleFunction, params, results []api.ValueType) HostFunctionBuilder
+
+	// WithFunc uses reflect.Value to map a go `func` to a WebAssembly
+	// compatible Signature. An input that isn't a `func` will fail to
+	// instantiate.
+	//
+	// Here's an example of an addition function:
+	//
+	//	builder.WithFunc(func(cxt context.Context, x, y uint32) uint32 {
 	//		return x + y
-	//	}
+	//	})
 	//
-	// Host functions may also have an initial parameter (param[0]) of type context.Context or api.Module.
+	// # Defining a function
 	//
-	// Ex. This uses a Go Context:
+	// Except for the context.Context and optional api.Module, all parameters
+	// or result types must map to WebAssembly numeric value types. This means
+	// uint32, int32, uint64, int64, float32 or float64.
 	//
-	//	addInts := func(ctx context.Context, x uint32, uint32) uint32 {
-	//		// add a little extra if we put some in the context!
-	//		return x + y + ctx.Value(extraKey).(uint32)
-	//	}
+	// api.Module may be specified as the second parameter, usually to access
+	// memory. This is important because there are only numeric types in Wasm.
+	// The only way to share other data is via writing memory and sharing
+	// offsets.
 	//
-	// Ex. This uses an api.Module to reads the parameters from memory. This is important because there are only numeric
-	// types in Wasm. The only way to share other data is via writing memory and sharing offsets.
-	//
-	//	addInts := func(ctx context.Context, m api.Module, offset uint32) uint32 {
-	//		x, _ := m.Memory().ReadUint32Le(ctx, offset)
-	//		y, _ := m.Memory().ReadUint32Le(ctx, offset + 4) // 32 bits == 4 bytes!
+	//	builder.WithFunc(func(ctx context.Context, m api.Module, offset uint32) uint32 {
+	//		mem := m.Memory()
+	//		x, _ := mem.ReadUint32Le(ctx, offset)
+	//		y, _ := mem.ReadUint32Le(ctx, offset + 4) // 32 bits == 4 bytes!
 	//		return x + y
-	//	}
+	//	})
 	//
-	// If both parameters exist, they must be in order at positions zero and one.
+	// This example propagates context properly when calling other functions
+	// exported in the api.Module:
 	//
-	// Ex. This uses propagates context properly when calling other functions exported in the api.Module:
-	//	callRead := func(ctx context.Context, m api.Module, offset, byteCount uint32) uint32 {
+	//	builder.WithFunc(func(ctx context.Context, m api.Module, offset, byteCount uint32) uint32 {
 	//		fn = m.ExportedFunction("__read")
 	//		results, err := fn(ctx, offset, byteCount)
 	//	--snip--
-	//
-	// Note: If a function is already exported with the same name, this overwrites it.
-	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#host-functions%E2%91%A2
-	ExportFunction(name string, goFunc interface{}) ModuleBuilder
+	WithFunc(interface{}) HostFunctionBuilder
 
-	// ExportFunctions is a convenience that calls ExportFunction for each key/value in the provided map.
-	ExportFunctions(nameToGoFunc map[string]interface{}) ModuleBuilder
+	// WithName defines the optional module-local name of this function, e.g.
+	// "random_get"
+	//
+	// Note: This is not required to match the Export name.
+	WithName(name string) HostFunctionBuilder
 
-	// ExportMemory adds linear memory, which a WebAssembly module can import and become available via api.Memory.
+	// WithParameterNames defines optional parameter names of the function
+	// signature, e.x. "buf", "buf_len"
 	//
-	// * name - the name to export. Ex "memory" for wasi.ModuleSnapshotPreview1
-	// * minPages - the possibly zero initial size in pages (65536 bytes per page).
-	//
-	// For example, the WebAssembly 1.0 Text Format below is the equivalent of this builder method:
-	//	// (memory (export "memory") 1)
-	//	builder.ExportMemory(1)
-	//
-	// Note: This is allowed to grow to RuntimeConfig.WithMemoryLimitPages (4GiB). To bound it, use ExportMemoryWithMax.
-	// Note: If a memory is already exported with the same name, this overwrites it.
-	// Note: Version 1.0 (20191205) of the WebAssembly spec allows at most one memory per module.
-	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#memory-section%E2%91%A0
-	ExportMemory(name string, minPages uint32) ModuleBuilder
+	// Note: When defined, names must be provided for all parameters.
+	WithParameterNames(names ...string) HostFunctionBuilder
 
-	// ExportMemoryWithMax is like ExportMemory, but can prevent overuse of memory.
+	// WithResultNames defines optional result names of the function
+	// signature, e.x. "errno"
 	//
-	// For example, the WebAssembly 1.0 Text Format below is the equivalent of this builder method:
-	//	// (memory (export "memory") 1 1)
-	//	builder.ExportMemoryWithMax(1, 1)
-	//
-	// Note: maxPages must be at least minPages and no larger than RuntimeConfig.WithMemoryLimitPages
-	ExportMemoryWithMax(name string, minPages, maxPages uint32) ModuleBuilder
+	// Note: When defined, names must be provided for all results.
+	WithResultNames(names ...string) HostFunctionBuilder
 
-	// ExportGlobalI32 exports a global constant of type api.ValueTypeI32.
-	//
-	// For example, the WebAssembly 1.0 Text Format below is the equivalent of this builder method:
-	//	// (global (export "canvas_width") i32 (i32.const 1024))
-	//	builder.ExportGlobalI32("canvas_width", 1024)
-	//
-	// Note: If a global is already exported with the same name, this overwrites it.
-	// Note: The maximum value of v is math.MaxInt32 to match constraints of initialization in binary format.
-	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#value-types%E2%91%A0
-	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#syntax-globaltype
-	ExportGlobalI32(name string, v int32) ModuleBuilder
+	// Export exports this to the HostModuleBuilder as the given name, e.g.
+	// "random_get"
+	Export(name string) HostModuleBuilder
+}
 
-	// ExportGlobalI64 exports a global constant of type api.ValueTypeI64.
-	//
-	// For example, the WebAssembly 1.0 Text Format below is the equivalent of this builder method:
-	//	// (global (export "start_epoch") i64 (i64.const 1620216263544))
-	//	builder.ExportGlobalI64("start_epoch", 1620216263544)
-	//
-	// Note: If a global is already exported with the same name, this overwrites it.
-	// Note: The maximum value of v is math.MaxInt64 to match constraints of initialization in binary format.
-	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#value-types%E2%91%A0
-	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#syntax-globaltype
-	ExportGlobalI64(name string, v int64) ModuleBuilder
+// HostModuleBuilder is a way to define host functions (in Go), so that a
+// WebAssembly binary (e.g. %.wasm file) can import and use them.
+//
+// Specifically, this implements the host side of an Application Binary
+// Interface (ABI) like WASI or AssemblyScript.
+//
+// For example, this defines and instantiates a module named "env" with one
+// function:
+//
+//	ctx := context.Background()
+//	r := wazero.NewRuntime(ctx)
+//	defer r.Close(ctx) // This closes everything this Runtime created.
+//
+//	hello := func() {
+//		println("hello!")
+//	}
+//	env, _ := r.NewHostModuleBuilder("env").
+//		NewFunctionBuilder().WithFunc(hello).Export("hello").
+//		Instantiate(ctx)
+//
+// If the same module may be instantiated multiple times, it is more efficient
+// to separate steps. Here's an example:
+//
+//	compiled, _ := r.NewHostModuleBuilder("env").
+//		NewFunctionBuilder().WithFunc(getRandomString).Export("get_random_string").
+//		Compile(ctx)
+//
+//	env1, _ := r.InstantiateModule(ctx, compiled, wazero.NewModuleConfig().WithName("env.1"))
+//	env2, _ := r.InstantiateModule(ctx, compiled, wazero.NewModuleConfig().WithName("env.2"))
+//
+// See HostFunctionBuilder for valid host function signatures and other details.
+//
+// # Notes
+//
+//   - This is an interface for decoupling, not third-party implementations.
+//     All implementations are in wazero.
+//   - HostModuleBuilder is mutable: each method returns the same instance for
+//     chaining.
+//   - methods do not return errors, to allow chaining. Any validation errors
+//     are deferred until Compile.
+//   - Functions are indexed in order of calls to NewFunctionBuilder as
+//     insertion ordering is needed by ABI such as Emscripten (invoke_*).
+//   - The semantics of host functions assumes the existence of an "importing module" because, for example, the host function needs access to
+//     the memory of the importing module. Therefore, direct use of ExportedFunction is forbidden for host modules.
+//     Practically speaking, it is usually meaningless to directly call a host function from Go code as it is already somewhere in Go code.
+type HostModuleBuilder interface {
+	// Note: until golang/go#5860, we can't use example tests to embed code in interface godocs.
 
-	// ExportGlobalF32 exports a global constant of type api.ValueTypeF32.
-	//
-	// For example, the WebAssembly 1.0 Text Format below is the equivalent of this builder method:
-	//	// (global (export "math/pi") f32 (f32.const 3.1415926536))
-	//	builder.ExportGlobalF32("math/pi", 3.1415926536)
-	//
-	// Note: If a global is already exported with the same name, this overwrites it.
-	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#syntax-globaltype
-	ExportGlobalF32(name string, v float32) ModuleBuilder
+	// NewFunctionBuilder begins the definition of a host function.
+	NewFunctionBuilder() HostFunctionBuilder
 
-	// ExportGlobalF64 exports a global constant of type api.ValueTypeF64.
-	//
-	// For example, the WebAssembly 1.0 Text Format below is the equivalent of this builder method:
-	//	// (global (export "math/pi") f64 (f64.const 3.14159265358979323846264338327950288419716939937510582097494459))
-	//	builder.ExportGlobalF64("math/pi", 3.14159265358979323846264338327950288419716939937510582097494459)
-	//
-	// Note: If a global is already exported with the same name, this overwrites it.
-	// See https://www.w3.org/TR/2019/REC-wasm-core-1-20191205/#syntax-globaltype
-	ExportGlobalF64(name string, v float64) ModuleBuilder
+	// Compile returns a CompiledModule that can be instantiated by Runtime.
+	Compile(context.Context) (CompiledModule, error)
 
-	// Compile returns a module to instantiate, or an error if any of the configuration is invalid.
+	// Instantiate is a convenience that calls Compile, then Runtime.InstantiateModule.
+	// This can fail for reasons documented on Runtime.InstantiateModule.
 	//
-	// Note: Closing the wazero.Runtime closes any CompiledModule it compiled.
-	Compile(context.Context, CompileConfig) (CompiledModule, error)
-
-	// Instantiate is a convenience that calls Build, then Runtime.InstantiateModule, using default configuration.
+	// Here's an example:
 	//
-	// Note: Closing the wazero.Runtime closes any api.Module it instantiated.
-	// Note: Fields in the builder are copied during instantiation: Later changes do not affect the instantiated result.
-	// Note: To avoid using configuration defaults, use Compile instead.
+	//	ctx := context.Background()
+	//	r := wazero.NewRuntime(ctx)
+	//	defer r.Close(ctx) // This closes everything this Runtime created.
+	//
+	//	hello := func() {
+	//		println("hello!")
+	//	}
+	//	env, _ := r.NewHostModuleBuilder("env").
+	//		NewFunctionBuilder().WithFunc(hello).Export("hello").
+	//		Instantiate(ctx)
+	//
+	// # Notes
+	//
+	//   - Closing the Runtime has the same effect as closing the result.
+	//   - Fields in the builder are copied during instantiation: Later changes do not affect the instantiated result.
+	//   - To avoid using configuration defaults, use Compile instead.
 	Instantiate(context.Context) (api.Module, error)
 }
 
-// moduleBuilder implements ModuleBuilder
-type moduleBuilder struct {
-	r            *runtime
-	moduleName   string
-	nameToGoFunc map[string]interface{}
-	nameToMemory map[string]*wasm.Memory
-	nameToGlobal map[string]*wasm.Global
+// hostModuleBuilder implements HostModuleBuilder
+type hostModuleBuilder struct {
+	r              *runtime
+	moduleName     string
+	exportNames    []string
+	nameToHostFunc map[string]*wasm.HostFunc
 }
 
-// NewModuleBuilder implements Runtime.NewModuleBuilder
-func (r *runtime) NewModuleBuilder(moduleName string) ModuleBuilder {
-	return &moduleBuilder{
-		r:            r,
-		moduleName:   moduleName,
-		nameToGoFunc: map[string]interface{}{},
-		nameToMemory: map[string]*wasm.Memory{},
-		nameToGlobal: map[string]*wasm.Global{},
+// NewHostModuleBuilder implements Runtime.NewHostModuleBuilder
+func (r *runtime) NewHostModuleBuilder(moduleName string) HostModuleBuilder {
+	return &hostModuleBuilder{
+		r:              r,
+		moduleName:     moduleName,
+		nameToHostFunc: map[string]*wasm.HostFunc{},
 	}
 }
 
-// ExportFunction implements ModuleBuilder.ExportFunction
-func (b *moduleBuilder) ExportFunction(name string, goFunc interface{}) ModuleBuilder {
-	b.nameToGoFunc[name] = goFunc
-	return b
+// hostFunctionBuilder implements HostFunctionBuilder
+type hostFunctionBuilder struct {
+	b           *hostModuleBuilder
+	fn          interface{}
+	name        string
+	paramNames  []string
+	resultNames []string
 }
 
-// ExportFunctions implements ModuleBuilder.ExportFunctions
-func (b *moduleBuilder) ExportFunctions(nameToGoFunc map[string]interface{}) ModuleBuilder {
-	for k, v := range nameToGoFunc {
-		b.ExportFunction(k, v)
-	}
-	return b
+// WithGoFunction implements HostFunctionBuilder.WithGoFunction
+func (h *hostFunctionBuilder) WithGoFunction(fn api.GoFunction, params, results []api.ValueType) HostFunctionBuilder {
+	h.fn = &wasm.HostFunc{ParamTypes: params, ResultTypes: results, Code: wasm.Code{GoFunc: fn}}
+	return h
 }
 
-// ExportMemory implements ModuleBuilder.ExportMemory
-func (b *moduleBuilder) ExportMemory(name string, minPages uint32) ModuleBuilder {
-	b.nameToMemory[name] = &wasm.Memory{Min: minPages}
-	return b
+// WithGoModuleFunction implements HostFunctionBuilder.WithGoModuleFunction
+func (h *hostFunctionBuilder) WithGoModuleFunction(fn api.GoModuleFunction, params, results []api.ValueType) HostFunctionBuilder {
+	h.fn = &wasm.HostFunc{ParamTypes: params, ResultTypes: results, Code: wasm.Code{GoFunc: fn}}
+	return h
 }
 
-// ExportMemoryWithMax implements ModuleBuilder.ExportMemoryWithMax
-func (b *moduleBuilder) ExportMemoryWithMax(name string, minPages, maxPages uint32) ModuleBuilder {
-	b.nameToMemory[name] = &wasm.Memory{Min: minPages, Max: maxPages, IsMaxEncoded: true}
-	return b
+// WithFunc implements HostFunctionBuilder.WithFunc
+func (h *hostFunctionBuilder) WithFunc(fn interface{}) HostFunctionBuilder {
+	h.fn = fn
+	return h
 }
 
-// ExportGlobalI32 implements ModuleBuilder.ExportGlobalI32
-func (b *moduleBuilder) ExportGlobalI32(name string, v int32) ModuleBuilder {
-	b.nameToGlobal[name] = &wasm.Global{
-		Type: &wasm.GlobalType{ValType: wasm.ValueTypeI32},
-		// Treat constants as signed as their interpretation is not yet known per /RATIONALE.md
-		Init: &wasm.ConstantExpression{Opcode: wasm.OpcodeI32Const, Data: leb128.EncodeInt32(v)},
-	}
-	return b
+// WithName implements HostFunctionBuilder.WithName
+func (h *hostFunctionBuilder) WithName(name string) HostFunctionBuilder {
+	h.name = name
+	return h
 }
 
-// ExportGlobalI64 implements ModuleBuilder.ExportGlobalI64
-func (b *moduleBuilder) ExportGlobalI64(name string, v int64) ModuleBuilder {
-	b.nameToGlobal[name] = &wasm.Global{
-		Type: &wasm.GlobalType{ValType: wasm.ValueTypeI64},
-		// Treat constants as signed as their interpretation is not yet known per /RATIONALE.md
-		Init: &wasm.ConstantExpression{Opcode: wasm.OpcodeI64Const, Data: leb128.EncodeInt64(v)},
-	}
-	return b
+// WithParameterNames implements HostFunctionBuilder.WithParameterNames
+func (h *hostFunctionBuilder) WithParameterNames(names ...string) HostFunctionBuilder {
+	h.paramNames = names
+	return h
 }
 
-// ExportGlobalF32 implements ModuleBuilder.ExportGlobalF32
-func (b *moduleBuilder) ExportGlobalF32(name string, v float32) ModuleBuilder {
-	b.nameToGlobal[name] = &wasm.Global{
-		Type: &wasm.GlobalType{ValType: wasm.ValueTypeF32},
-		Init: &wasm.ConstantExpression{Opcode: wasm.OpcodeF32Const, Data: u64.LeBytes(api.EncodeF32(v))},
-	}
-	return b
+// WithResultNames implements HostFunctionBuilder.WithResultNames
+func (h *hostFunctionBuilder) WithResultNames(names ...string) HostFunctionBuilder {
+	h.resultNames = names
+	return h
 }
 
-// ExportGlobalF64 implements ModuleBuilder.ExportGlobalF64
-func (b *moduleBuilder) ExportGlobalF64(name string, v float64) ModuleBuilder {
-	b.nameToGlobal[name] = &wasm.Global{
-		Type: &wasm.GlobalType{ValType: wasm.ValueTypeF64},
-		Init: &wasm.ConstantExpression{Opcode: wasm.OpcodeF64Const, Data: u64.LeBytes(api.EncodeF64(v))},
-	}
-	return b
-}
-
-// Compile implements ModuleBuilder.Compile
-func (b *moduleBuilder) Compile(ctx context.Context, cConfig CompileConfig) (CompiledModule, error) {
-	config, ok := cConfig.(*compileConfig)
-	if !ok {
-		panic(fmt.Errorf("unsupported wazero.CompileConfig implementation: %#v", cConfig))
+// Export implements HostFunctionBuilder.Export
+func (h *hostFunctionBuilder) Export(exportName string) HostModuleBuilder {
+	var hostFn *wasm.HostFunc
+	if fn, ok := h.fn.(*wasm.HostFunc); ok {
+		hostFn = fn
+	} else {
+		hostFn = &wasm.HostFunc{Code: wasm.Code{GoFunc: h.fn}}
 	}
 
-	// Verify the maximum limit here, so we don't have to pass it to wasm.NewHostModule
-	for name, mem := range b.nameToMemory {
-		var maxP *uint32
-		if mem.IsMaxEncoded {
-			maxP = &mem.Max
-		}
-		mem.Min, mem.Cap, mem.Max = config.memorySizer(mem.Min, maxP)
-		if err := mem.Validate(); err != nil {
-			return nil, fmt.Errorf("memory[%s] %v", name, err)
-		}
+	// Assign any names from the builder
+	hostFn.ExportName = exportName
+	if h.name != "" {
+		hostFn.Name = h.name
+	}
+	if len(h.paramNames) != 0 {
+		hostFn.ParamNames = h.paramNames
+	}
+	if len(h.resultNames) != 0 {
+		hostFn.ResultNames = h.resultNames
 	}
 
-	module, err := wasm.NewHostModule(b.moduleName, b.nameToGoFunc, b.nameToMemory, b.nameToGlobal, b.r.enabledFeatures)
+	h.b.ExportHostFunc(hostFn)
+	return h.b
+}
+
+// ExportHostFunc implements wasm.HostFuncExporter
+func (b *hostModuleBuilder) ExportHostFunc(fn *wasm.HostFunc) {
+	if _, ok := b.nameToHostFunc[fn.ExportName]; !ok { // add a new name
+		b.exportNames = append(b.exportNames, fn.ExportName)
+	}
+	b.nameToHostFunc[fn.ExportName] = fn
+}
+
+// NewFunctionBuilder implements HostModuleBuilder.NewFunctionBuilder
+func (b *hostModuleBuilder) NewFunctionBuilder() HostFunctionBuilder {
+	return &hostFunctionBuilder{b: b}
+}
+
+// Compile implements HostModuleBuilder.Compile
+func (b *hostModuleBuilder) Compile(ctx context.Context) (CompiledModule, error) {
+	module, err := wasm.NewHostModule(b.moduleName, b.exportNames, b.nameToHostFunc, b.r.enabledFeatures)
+	if err != nil {
+		return nil, err
+	} else if err = module.Validate(b.r.enabledFeatures); err != nil {
+		return nil, err
+	}
+
+	c := &compiledModule{module: module, compiledEngine: b.r.store.Engine}
+	listeners, err := buildFunctionListeners(ctx, module)
 	if err != nil {
 		return nil, err
 	}
 
-	if err = b.r.store.Engine.CompileModule(ctx, module); err != nil {
+	if err = b.r.store.Engine.CompileModule(ctx, module, listeners, false); err != nil {
 		return nil, err
 	}
 
-	return &compiledCode{module: module, compiledEngine: b.r.store.Engine}, nil
+	// typeIDs are static and compile-time known.
+	typeIDs, err := b.r.store.GetFunctionTypeIDs(module.TypeSection)
+	if err != nil {
+		return nil, err
+	}
+	c.typeIDs = typeIDs
+
+	return c, nil
 }
 
-// Instantiate implements ModuleBuilder.Instantiate
-func (b *moduleBuilder) Instantiate(ctx context.Context) (api.Module, error) {
-	if compiled, err := b.Compile(ctx, NewCompileConfig()); err != nil {
+// hostModuleInstance is a wrapper around api.Module that prevents calling ExportedFunction.
+type hostModuleInstance struct{ api.Module }
+
+// ExportedFunction implements api.Module ExportedFunction.
+func (h hostModuleInstance) ExportedFunction(name string) api.Function {
+	panic("calling ExportedFunction is forbidden on host modules. See the note on ExportedFunction interface")
+}
+
+// Instantiate implements HostModuleBuilder.Instantiate
+func (b *hostModuleBuilder) Instantiate(ctx context.Context) (api.Module, error) {
+	if compiled, err := b.Compile(ctx); err != nil {
 		return nil, err
 	} else {
-		if err = b.r.store.Engine.CompileModule(ctx, compiled.(*compiledCode).module); err != nil {
+		compiled.(*compiledModule).closeWithModule = true
+		m, err := b.r.InstantiateModule(ctx, compiled, NewModuleConfig())
+		if err != nil {
 			return nil, err
 		}
-		// *wasm.ModuleInstance cannot be tracked, so we release the cache inside this function.
-		defer compiled.Close(ctx)
-		return b.r.InstantiateModule(ctx, compiled, NewModuleConfig().WithName(b.moduleName))
+		return hostModuleInstance{m}, nil
 	}
 }

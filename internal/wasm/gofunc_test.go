@@ -3,7 +3,6 @@ package wasm
 import (
 	"context"
 	"math"
-	"reflect"
 	"testing"
 	"unsafe"
 
@@ -11,97 +10,75 @@ import (
 	"github.com/tetratelabs/wazero/internal/testing/require"
 )
 
-// testCtx is an arbitrary, non-default context. Non-nil also prevents linter errors.
-var testCtx = context.WithValue(context.Background(), struct{}{}, "arbitrary")
+type arbitrary struct{}
 
-func TestGetFunctionType(t *testing.T) {
-	var tests = []struct {
-		name         string
-		inputFunc    interface{}
-		expectedKind FunctionKind
-		expectedType *FunctionType
+// testCtx is an arbitrary, non-default context. Non-nil also prevents linter errors.
+var testCtx = context.WithValue(context.Background(), arbitrary{}, "arbitrary")
+
+func Test_parseGoFunc(t *testing.T) {
+	tests := []struct {
+		name              string
+		input             interface{}
+		expectNeedsModule bool
+		expectedType      *FunctionType
 	}{
 		{
-			name:         "nullary",
-			inputFunc:    func() {},
-			expectedKind: FunctionKindGoNoContext,
-			expectedType: &FunctionType{Params: []ValueType{}, Results: []ValueType{}},
+			name:         "() -> ()",
+			input:        func() {},
+			expectedType: &FunctionType{},
 		},
 		{
-			name:         "wasm.Module void return",
-			inputFunc:    func(api.Module) {},
-			expectedKind: FunctionKindGoModule,
-			expectedType: &FunctionType{Params: []ValueType{}, Results: []ValueType{}},
+			name:         "(ctx) -> ()",
+			input:        func(context.Context) {},
+			expectedType: &FunctionType{},
 		},
 		{
-			name:         "context.Context void return",
-			inputFunc:    func(context.Context) {},
-			expectedKind: FunctionKindGoContext,
-			expectedType: &FunctionType{Params: []ValueType{}, Results: []ValueType{}},
-		},
-		{
-			name:         "context.Context and api.Module void return",
-			inputFunc:    func(context.Context, api.Module) {},
-			expectedKind: FunctionKindGoContextModule,
-			expectedType: &FunctionType{Params: []ValueType{}, Results: []ValueType{}},
+			name:              "(ctx, mod) -> ()",
+			input:             func(context.Context, api.Module) {},
+			expectNeedsModule: true,
+			expectedType:      &FunctionType{},
 		},
 		{
 			name:         "all supported params and i32 result",
-			inputFunc:    func(uint32, uint64, float32, float64, uintptr) uint32 { return 0 },
-			expectedKind: FunctionKindGoNoContext,
-			expectedType: &FunctionType{Params: []ValueType{i32, i64, f32, f64, externref}, Results: []ValueType{i32}, ParamNumInUint64: 5, ResultNumInUint64: 1},
+			input:        func(uint32, uint64, float32, float64, uintptr) uint32 { return 0 },
+			expectedType: &FunctionType{Params: []ValueType{i32, i64, f32, f64, externref}, Results: []ValueType{i32}},
 		},
 		{
-			name: "all supported params and all supported results",
-			inputFunc: func(uint32, uint64, float32, float64, uintptr) (uint32, uint64, float32, float64, uintptr) {
-				return 0, 0, 0, 0, 0
-			},
-			expectedKind: FunctionKindGoNoContext,
-			expectedType: &FunctionType{
-				Params:           []ValueType{i32, i64, f32, f64, externref},
-				Results:          []ValueType{i32, i64, f32, f64, externref},
-				ParamNumInUint64: 5, ResultNumInUint64: 5,
-			},
+			name:         "all supported params and i32 result - (ctx)",
+			input:        func(context.Context, uint32, uint64, float32, float64, uintptr) uint32 { return 0 },
+			expectedType: &FunctionType{Params: []ValueType{i32, i64, f32, f64, externref}, Results: []ValueType{i32}},
 		},
 		{
-			name:         "all supported params and i32 result - wasm.Module",
-			inputFunc:    func(api.Module, uint32, uint64, float32, float64, uintptr) uint32 { return 0 },
-			expectedKind: FunctionKindGoModule,
-			expectedType: &FunctionType{Params: []ValueType{i32, i64, f32, f64, externref}, Results: []ValueType{i32}, ParamNumInUint64: 5, ResultNumInUint64: 1},
-		},
-		{
-			name:         "all supported params and i32 result - context.Context",
-			inputFunc:    func(context.Context, uint32, uint64, float32, float64, uintptr) uint32 { return 0 },
-			expectedKind: FunctionKindGoContext,
-			expectedType: &FunctionType{Params: []ValueType{i32, i64, f32, f64, externref}, Results: []ValueType{i32}, ParamNumInUint64: 5, ResultNumInUint64: 1},
-		},
-		{
-			name:         "all supported params and i32 result - context.Context and api.Module",
-			inputFunc:    func(context.Context, api.Module, uint32, uint64, float32, float64, uintptr) uint32 { return 0 },
-			expectedKind: FunctionKindGoContextModule,
-			expectedType: &FunctionType{Params: []ValueType{i32, i64, f32, f64, externref}, Results: []ValueType{i32}, ParamNumInUint64: 5, ResultNumInUint64: 1},
+			name:              "all supported params and i32 result - (ctx, mod)",
+			input:             func(context.Context, api.Module, uint32, uint64, float32, float64, uintptr) uint32 { return 0 },
+			expectNeedsModule: true,
+			expectedType:      &FunctionType{Params: []ValueType{i32, i64, f32, f64, externref}, Results: []ValueType{i32}},
 		},
 	}
 	for _, tt := range tests {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			rVal := reflect.ValueOf(tc.inputFunc)
-			fk, ft, err := getFunctionType(&rVal, Features20191205|FeatureMultiValue)
+			paramTypes, resultTypes, code, err := parseGoReflectFunc(tc.input)
 			require.NoError(t, err)
-			require.Equal(t, tc.expectedKind, fk)
-			require.Equal(t, tc.expectedType, ft)
+			_, isModuleFunc := code.GoFunc.(api.GoModuleFunction)
+			require.Equal(t, tc.expectNeedsModule, isModuleFunc)
+			require.Equal(t, tc.expectedType, &FunctionType{Params: paramTypes, Results: resultTypes})
 		})
 	}
 }
 
-func TestGetFunctionTypeErrors(t *testing.T) {
+func Test_parseGoFunc_Errors(t *testing.T) {
 	tests := []struct {
-		name             string
-		input            interface{}
-		allowErrorResult bool
-		expectedErr      string
+		name        string
+		input       interface{}
+		expectedErr string
 	}{
+		{
+			name:        "module no context",
+			input:       func(api.Module) {},
+			expectedErr: "invalid signature: api.Module parameter must be preceded by context.Context",
+		},
 		{
 			name:        "not a func",
 			input:       struct{}{},
@@ -109,8 +86,8 @@ func TestGetFunctionTypeErrors(t *testing.T) {
 		},
 		{
 			name:        "unsupported param",
-			input:       func(uint32, string) {},
-			expectedErr: "param[1] is unsupported: string",
+			input:       func(context.Context, uint32, string) {},
+			expectedErr: "param[2] is unsupported: string",
 		},
 		{
 			name:        "unsupported result",
@@ -123,14 +100,9 @@ func TestGetFunctionTypeErrors(t *testing.T) {
 			expectedErr: "result[0] is an error, which is unsupported",
 		},
 		{
-			name:        "multiple results - multi-value not enabled",
-			input:       func() (uint64, uint32) { return 0, 0 },
-			expectedErr: "multiple result types invalid as feature \"multi-value\" is disabled",
-		},
-		{
-			name:        "multiple context types",
+			name:        "incorrect order",
 			input:       func(api.Module, context.Context) error { return nil },
-			expectedErr: "param[1] is a context.Context, which may be defined only once as param[0]",
+			expectedErr: "invalid signature: api.Module parameter must be preceded by context.Context",
 		},
 		{
 			name:        "multiple context.Context",
@@ -139,8 +111,8 @@ func TestGetFunctionTypeErrors(t *testing.T) {
 		},
 		{
 			name:        "multiple wasm.Module",
-			input:       func(api.Module, uint64, api.Module) error { return nil },
-			expectedErr: "param[2] is a api.Module, which may be defined only once as param[0]",
+			input:       func(context.Context, api.Module, uint64, api.Module) error { return nil },
+			expectedErr: "param[3] is a api.Module, which may be defined only once as param[0]",
 		},
 	}
 
@@ -148,157 +120,41 @@ func TestGetFunctionTypeErrors(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			rVal := reflect.ValueOf(tc.input)
-			_, _, err := getFunctionType(&rVal, Features20191205)
+			_, _, _, err := parseGoReflectFunc(tc.input)
 			require.EqualError(t, err, tc.expectedErr)
 		})
 	}
 }
 
-// stack simulates the value stack in a way easy to be tested.
-type stack struct {
-	vals []uint64
-}
-
-func (s *stack) pop() (result uint64) {
-	stackTopIndex := len(s.vals) - 1
-	result = s.vals[stackTopIndex]
-	s.vals = s.vals[:stackTopIndex]
-	return
-}
-
-func TestPopValues(t *testing.T) {
-	stackVals := []uint64{1, 2, 3, 4, 5, 6, 7}
-	var tests = []struct {
-		name     string
-		count    int
-		expected []uint64
-	}{
-		{
-			name: "pop zero doesn't allocate a slice ",
-		},
-		{
-			name:     "pop 1",
-			count:    1,
-			expected: []uint64{7},
-		},
-		{
-			name:     "pop 2",
-			count:    2,
-			expected: []uint64{6, 7},
-		},
-		{
-			name:     "pop 3",
-			count:    3,
-			expected: []uint64{5, 6, 7},
-		},
-	}
-
-	for _, tt := range tests {
-		tc := tt
-
-		t.Run(tc.name, func(t *testing.T) {
-			vals := PopValues(tc.count, (&stack{stackVals}).pop)
-			require.Equal(t, tc.expected, vals)
-		})
-	}
-}
-
-func TestPopGoFuncParams(t *testing.T) {
-	stackVals := []uint64{1, 2, 3, 4, 5, 6, 7}
-	var tests = []struct {
-		name      string
-		inputFunc interface{}
-		expected  []uint64
-	}{
-		{
-			name:      "nullary",
-			inputFunc: func() {},
-		},
-		{
-			name:      "wasm.Module",
-			inputFunc: func(api.Module) {},
-		},
-		{
-			name:      "context.Context",
-			inputFunc: func(context.Context) {},
-		},
-		{
-			name:      "context.Context and api.Module",
-			inputFunc: func(context.Context, api.Module) {},
-		},
-		{
-			name:      "all supported params",
-			inputFunc: func(uint32, uint64, float32, float64, uintptr) {},
-			expected:  []uint64{3, 4, 5, 6, 7},
-		},
-		{
-			name:      "all supported params - wasm.Module",
-			inputFunc: func(api.Module, uint32, uint64, float32, float64, uintptr) {},
-			expected:  []uint64{3, 4, 5, 6, 7},
-		},
-		{
-			name:      "all supported params - context.Context",
-			inputFunc: func(context.Context, uint32, uint64, float32, float64, uintptr) {},
-			expected:  []uint64{3, 4, 5, 6, 7},
-		},
-		{
-			name:      "all supported params - context.Context and api.Module",
-			inputFunc: func(context.Context, api.Module, uint32, uint64, float32, float64, uintptr) {},
-			expected:  []uint64{3, 4, 5, 6, 7},
-		},
-	}
-
-	for _, tt := range tests {
-		tc := tt
-
-		t.Run(tc.name, func(t *testing.T) {
-			goFunc := reflect.ValueOf(tc.inputFunc)
-			fk, _, err := getFunctionType(&goFunc, Features20220419)
-			require.NoError(t, err)
-
-			vals := PopGoFuncParams(&FunctionInstance{Kind: fk, GoFunc: &goFunc}, (&stack{stackVals}).pop)
-			require.Equal(t, tc.expected, vals)
-		})
-	}
-}
-
-func TestCallGoFunc(t *testing.T) {
+func Test_callGoFunc(t *testing.T) {
 	tPtr := uintptr(unsafe.Pointer(t))
-	callCtx := &CallContext{}
-	callCtxPtr := uintptr(unsafe.Pointer(callCtx))
+	inst := &ModuleInstance{}
 
-	var tests = []struct {
+	tests := []struct {
 		name                         string
-		inputFunc                    interface{}
+		input                        interface{}
 		inputParams, expectedResults []uint64
 	}{
 		{
-			name:      "nullary",
-			inputFunc: func() {},
+			name:  "() -> ()",
+			input: func() {},
 		},
 		{
-			name: "wasm.Module void return",
-			inputFunc: func(m api.Module) {
-				require.Equal(t, callCtx, m)
-			},
-		},
-		{
-			name: "context.Context void return",
-			inputFunc: func(ctx context.Context) {
+			name: "(ctx) -> ()",
+			input: func(ctx context.Context) {
 				require.Equal(t, testCtx, ctx)
 			},
 		},
 		{
-			name: "context.Context and api.Module void return",
-			inputFunc: func(ctx context.Context, m api.Module) {
+			name: "(ctx, mod) -> ()",
+			input: func(ctx context.Context, m api.Module) {
 				require.Equal(t, testCtx, ctx)
-				require.Equal(t, callCtx, m)
+				require.Equal(t, inst, m)
 			},
 		},
 		{
 			name: "all supported params and i32 result",
-			inputFunc: func(v uintptr, w uint32, x uint64, y float32, z float64) uint32 {
+			input: func(v uintptr, w uint32, x uint64, y float32, z float64) uint32 {
 				require.Equal(t, tPtr, v)
 				require.Equal(t, uint32(math.MaxUint32), w)
 				require.Equal(t, uint64(math.MaxUint64), x)
@@ -316,53 +172,8 @@ func TestCallGoFunc(t *testing.T) {
 			expectedResults: []uint64{100},
 		},
 		{
-			name: "all supported params and all supported results",
-			inputFunc: func(v uintptr, w uint32, x uint64, y float32, z float64) (uintptr, uint32, uint64, float32, float64) {
-				require.Equal(t, tPtr, v)
-				require.Equal(t, uint32(math.MaxUint32), w)
-				require.Equal(t, uint64(math.MaxUint64), x)
-				require.Equal(t, float32(math.MaxFloat32), y)
-				require.Equal(t, math.MaxFloat64, z)
-				return uintptr(unsafe.Pointer(callCtx)), 100, 200, 300, 400
-			},
-			inputParams: []uint64{
-				api.EncodeExternref(tPtr),
-				math.MaxUint32,
-				math.MaxUint64,
-				api.EncodeF32(math.MaxFloat32),
-				api.EncodeF64(math.MaxFloat64),
-			},
-			expectedResults: []uint64{
-				api.EncodeExternref(callCtxPtr),
-				api.EncodeI32(100),
-				200,
-				api.EncodeF32(300),
-				api.EncodeF64(400),
-			},
-		},
-		{
-			name: "all supported params and i32 result - wasm.Module",
-			inputFunc: func(m api.Module, v uintptr, w uint32, x uint64, y float32, z float64) uint32 {
-				require.Equal(t, callCtx, m)
-				require.Equal(t, tPtr, v)
-				require.Equal(t, uint32(math.MaxUint32), w)
-				require.Equal(t, uint64(math.MaxUint64), x)
-				require.Equal(t, float32(math.MaxFloat32), y)
-				require.Equal(t, math.MaxFloat64, z)
-				return 100
-			},
-			inputParams: []uint64{
-				api.EncodeExternref(tPtr),
-				math.MaxUint32,
-				math.MaxUint64,
-				api.EncodeF32(math.MaxFloat32),
-				api.EncodeF64(math.MaxFloat64),
-			},
-			expectedResults: []uint64{100},
-		},
-		{
-			name: "all supported params and i32 result - context.Context",
-			inputFunc: func(ctx context.Context, v uintptr, w uint32, x uint64, y float32, z float64) uint32 {
+			name: "all supported params and i32 result - (ctx)",
+			input: func(ctx context.Context, v uintptr, w uint32, x uint64, y float32, z float64) uint32 {
 				require.Equal(t, testCtx, ctx)
 				require.Equal(t, tPtr, v)
 				require.Equal(t, uint32(math.MaxUint32), w)
@@ -381,10 +192,10 @@ func TestCallGoFunc(t *testing.T) {
 			expectedResults: []uint64{100},
 		},
 		{
-			name: "all supported params and i32 result - context.Context and api.Module",
-			inputFunc: func(ctx context.Context, m api.Module, v uintptr, w uint32, x uint64, y float32, z float64) uint32 {
+			name: "all supported params and i32 result - (ctx, mod)",
+			input: func(ctx context.Context, m api.Module, v uintptr, w uint32, x uint64, y float32, z float64) uint32 {
 				require.Equal(t, testCtx, ctx)
-				require.Equal(t, callCtx, m)
+				require.Equal(t, inst, m)
 				require.Equal(t, tPtr, v)
 				require.Equal(t, uint32(math.MaxUint32), w)
 				require.Equal(t, uint64(math.MaxUint64), x)
@@ -406,11 +217,30 @@ func TestCallGoFunc(t *testing.T) {
 		tc := tt
 
 		t.Run(tc.name, func(t *testing.T) {
-			goFunc := reflect.ValueOf(tc.inputFunc)
-			fk, _, err := getFunctionType(&goFunc, Features20220419)
+			_, _, code, err := parseGoReflectFunc(tc.input)
 			require.NoError(t, err)
 
-			results := CallGoFunc(testCtx, callCtx, &FunctionInstance{Kind: fk, GoFunc: &goFunc}, tc.inputParams)
+			resultLen := len(tc.expectedResults)
+			stackLen := len(tc.inputParams)
+			if resultLen > stackLen {
+				stackLen = resultLen
+			}
+			stack := make([]uint64, stackLen)
+			copy(stack, tc.inputParams)
+
+			switch code.GoFunc.(type) {
+			case api.GoFunction:
+				code.GoFunc.(api.GoFunction).Call(testCtx, stack)
+			case api.GoModuleFunction:
+				code.GoFunc.(api.GoModuleFunction).Call(testCtx, inst, stack)
+			default:
+				t.Fatal("unexpected type.")
+			}
+
+			var results []uint64
+			if resultLen > 0 {
+				results = stack[:resultLen]
+			}
 			require.Equal(t, tc.expectedResults, results)
 		})
 	}

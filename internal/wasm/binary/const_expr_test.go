@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/internal/testing/require"
 	"github.com/tetratelabs/wazero/internal/wasm"
 )
@@ -12,7 +13,7 @@ import (
 func TestDecodeConstantExpression(t *testing.T) {
 	tests := []struct {
 		in  []byte
-		exp *wasm.ConstantExpression
+		exp wasm.ConstantExpression
 	}{
 		{
 			in: []byte{
@@ -20,7 +21,7 @@ func TestDecodeConstantExpression(t *testing.T) {
 				0x80, 0, // Multi byte zero.
 				wasm.OpcodeEnd,
 			},
-			exp: &wasm.ConstantExpression{
+			exp: wasm.ConstantExpression{
 				Opcode: wasm.OpcodeRefFunc,
 				Data:   []byte{0x80, 0},
 			},
@@ -31,7 +32,7 @@ func TestDecodeConstantExpression(t *testing.T) {
 				0x80, 0x80, 0x80, 0x4f, // 165675008 in varint encoding.
 				wasm.OpcodeEnd,
 			},
-			exp: &wasm.ConstantExpression{
+			exp: wasm.ConstantExpression{
 				Opcode: wasm.OpcodeRefFunc,
 				Data:   []byte{0x80, 0x80, 0x80, 0x4f},
 			},
@@ -42,7 +43,7 @@ func TestDecodeConstantExpression(t *testing.T) {
 				wasm.RefTypeFuncref,
 				wasm.OpcodeEnd,
 			},
-			exp: &wasm.ConstantExpression{
+			exp: wasm.ConstantExpression{
 				Opcode: wasm.OpcodeRefNull,
 				Data: []byte{
 					wasm.RefTypeFuncref,
@@ -55,7 +56,7 @@ func TestDecodeConstantExpression(t *testing.T) {
 				wasm.RefTypeExternref,
 				wasm.OpcodeEnd,
 			},
-			exp: &wasm.ConstantExpression{
+			exp: wasm.ConstantExpression{
 				Opcode: wasm.OpcodeRefNull,
 				Data: []byte{
 					wasm.RefTypeExternref,
@@ -70,7 +71,7 @@ func TestDecodeConstantExpression(t *testing.T) {
 				1, 1, 1, 1, 1, 1, 1, 1,
 				wasm.OpcodeEnd,
 			},
-			exp: &wasm.ConstantExpression{
+			exp: wasm.ConstantExpression{
 				Opcode: wasm.OpcodeVecV128Const,
 				Data: []byte{
 					1, 1, 1, 1, 1, 1, 1, 1,
@@ -83,8 +84,9 @@ func TestDecodeConstantExpression(t *testing.T) {
 	for i, tt := range tests {
 		tc := tt
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
-			actual, err := decodeConstantExpression(bytes.NewReader(tc.in),
-				wasm.FeatureBulkMemoryOperations|wasm.FeatureSIMD)
+			var actual wasm.ConstantExpression
+			err := decodeConstantExpression(bytes.NewReader(tc.in),
+				api.CoreFeatureBulkMemoryOperations|api.CoreFeatureSIMD, &actual)
 			require.NoError(t, err)
 			require.Equal(t, tc.exp, actual)
 		})
@@ -95,7 +97,7 @@ func TestDecodeConstantExpression_errors(t *testing.T) {
 	tests := []struct {
 		in          []byte
 		expectedErr string
-		features    wasm.Features
+		features    api.CoreFeatures
 	}{
 		{
 			in: []byte{
@@ -103,14 +105,14 @@ func TestDecodeConstantExpression_errors(t *testing.T) {
 				0,
 			},
 			expectedErr: "look for end opcode: EOF",
-			features:    wasm.FeatureBulkMemoryOperations,
+			features:    api.CoreFeatureBulkMemoryOperations,
 		},
 		{
 			in: []byte{
 				wasm.OpcodeRefNull,
 			},
 			expectedErr: "read reference type for ref.null: EOF",
-			features:    wasm.FeatureBulkMemoryOperations,
+			features:    api.CoreFeatureBulkMemoryOperations,
 		},
 		{
 			in: []byte{
@@ -119,7 +121,7 @@ func TestDecodeConstantExpression_errors(t *testing.T) {
 				wasm.OpcodeEnd,
 			},
 			expectedErr: "invalid type for ref.null: 0xff",
-			features:    wasm.FeatureBulkMemoryOperations,
+			features:    api.CoreFeatureBulkMemoryOperations,
 		},
 		{
 			in: []byte{
@@ -128,7 +130,7 @@ func TestDecodeConstantExpression_errors(t *testing.T) {
 				wasm.OpcodeEnd,
 			},
 			expectedErr: "ref.null is not supported as feature \"bulk-memory-operations\" is disabled",
-			features:    wasm.Features20191205,
+			features:    api.CoreFeaturesV1,
 		},
 		{
 			in: []byte{
@@ -137,7 +139,7 @@ func TestDecodeConstantExpression_errors(t *testing.T) {
 				wasm.OpcodeEnd,
 			},
 			expectedErr: "ref.func is not supported as feature \"bulk-memory-operations\" is disabled",
-			features:    wasm.Features20191205,
+			features:    api.CoreFeaturesV1,
 		},
 		{
 			in: []byte{
@@ -148,14 +150,14 @@ func TestDecodeConstantExpression_errors(t *testing.T) {
 				wasm.OpcodeEnd,
 			},
 			expectedErr: "vector instructions are not supported as feature \"simd\" is disabled",
-			features:    wasm.Features20191205,
+			features:    api.CoreFeaturesV1,
 		},
 		{
 			in: []byte{
 				wasm.OpcodeVecPrefix,
 			},
 			expectedErr: "read vector instruction opcode suffix: EOF",
-			features:    wasm.FeatureSIMD,
+			features:    api.CoreFeatureSIMD,
 		},
 		{
 			in: []byte{
@@ -165,7 +167,7 @@ func TestDecodeConstantExpression_errors(t *testing.T) {
 				wasm.OpcodeEnd,
 			},
 			expectedErr: "invalid vector opcode for const expression: 0x1",
-			features:    wasm.FeatureSIMD,
+			features:    api.CoreFeatureSIMD,
 		},
 		{
 			in: []byte{
@@ -174,14 +176,15 @@ func TestDecodeConstantExpression_errors(t *testing.T) {
 				1, 1, 1, 1, 1, 1, 1, 1,
 			},
 			expectedErr: "read vector const instruction immediates: needs 16 bytes but was 8 bytes",
-			features:    wasm.FeatureSIMD,
+			features:    api.CoreFeatureSIMD,
 		},
 	}
 
 	for _, tt := range tests {
 		tc := tt
 		t.Run(tc.expectedErr, func(t *testing.T) {
-			_, err := decodeConstantExpression(bytes.NewReader(tc.in), tc.features)
+			var actual wasm.ConstantExpression
+			err := decodeConstantExpression(bytes.NewReader(tc.in), tc.features, &actual)
 			require.EqualError(t, err, tc.expectedErr)
 		})
 	}

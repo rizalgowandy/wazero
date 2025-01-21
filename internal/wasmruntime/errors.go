@@ -4,9 +4,9 @@
 package wasmruntime
 
 var (
-	// ErrRuntimeCallStackOverflow indicates that there are too many function calls,
+	// ErrRuntimeStackOverflow indicates that there are too many function calls,
 	// and the Engine terminated the execution.
-	ErrRuntimeCallStackOverflow = New("callstack overflow")
+	ErrRuntimeStackOverflow = New("stack overflow")
 	// ErrRuntimeInvalidConversionToInteger indicates the Wasm function tries to
 	// convert NaN floating point value to integers during trunc variant instructions.
 	ErrRuntimeInvalidConversionToInteger = New("invalid conversion to integer")
@@ -27,6 +27,12 @@ var (
 	ErrRuntimeInvalidTableAccess = New("invalid table access")
 	// ErrRuntimeIndirectCallTypeMismatch indicates that the type check failed during call_indirect.
 	ErrRuntimeIndirectCallTypeMismatch = New("indirect call type mismatch")
+	// ErrRuntimeUnalignedAtomic indicates that an atomic operation was made with incorrect memory alignment.
+	ErrRuntimeUnalignedAtomic = New("unaligned atomic")
+	// ErrRuntimeExpectedSharedMemory indicates that an operation was made against unshared memory when not allowed.
+	ErrRuntimeExpectedSharedMemory = New("expected shared memory")
+	// ErrRuntimeTooManyWaiters indicates that atomic.wait was called with too many waiters.
+	ErrRuntimeTooManyWaiters = New("too many waiters")
 )
 
 // Error is returned by a wasm.Engine during the execution of Wasm functions, and they indicate that the Wasm runtime

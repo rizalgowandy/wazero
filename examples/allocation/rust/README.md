@@ -3,7 +3,6 @@
 This example shows how to pass strings in and out of a Wasm function defined
 in Rust, built with `cargo build --release --target wasm32-unknown-unknown`
 
-Ex.
 ```bash
 $ go run greet.go wazero
 Hello, wazero!
@@ -18,6 +17,6 @@ Under the covers, [lib.rs](testdata/src/lib.rs) does a few things of interest:
 Note: We chose to not use CString because it keeps the example similar to how
 you would track memory for arbitrary blobs. We also watched function signatures
 carefully as Rust compiles different WebAssembly signatures depending on the
-input type. All of this is Rust-specific, and wazero isn't a Rust project, but
-we hope this gets you started. For next steps, consider reading the
-[Rust and WebAssembly book](https://rustwasm.github.io/docs/book/).
+input type.
+
+See https://wazero.io/languages/rust/ for more tips.
